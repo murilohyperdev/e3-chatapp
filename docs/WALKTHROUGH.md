@@ -1,4 +1,4 @@
-# Codebase walkthrough (items 1 to 3)
+# Codebase walkthrough (items 1 to 4)
 
 Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
@@ -6,20 +6,23 @@ Interview notes: what each part does and why it was built that way. Portuguese v
 
 ```
 Browser (React, :5173)
-   |  same-origin requests: /api, /sanctum, /storage
+   |  same-origin requests: /api, /sanctum, /storage, /app
    v
 Vite dev server (proxy)  ---->  Laravel API (:8000)  ---->  PostgreSQL
-                                      |
-                                      +--> Mailpit (SMTP :1025, inbox UI :8025)
+   |                                  |    |
+   |                                  |    +--> Mailpit (SMTP :1025, inbox UI :8025)
+   |  WebSocket upgrade: /app         |
+   v                                  | publishes new messages (HTTP)
+Reverb WebSocket server (:8080)  <----+
 ```
 
-* **One origin.** The browser only talks to Vite, which proxies `/api`, `/sanctum` and `/storage` to Laravel. Cookies are
+* **One origin.** The browser only talks to Vite, which proxies `/api`, `/sanctum` and `/storage` to Laravel and the WebSocket path `/app` to Reverb. Cookies are
   first-party, there is no CORS, and the same shape works behind a single reverse proxy in production.
 * **Sessions, not tokens.** Laravel Sanctum's SPA mode keeps the login in an `HttpOnly` session cookie that JavaScript
   cannot read, so an XSS bug cannot steal a token. Revocation is just ending the session.
 * **Spec-driven workflow.** Every item went through OpenSpec: explore, propose (proposal, specs, design, tasks),
   apply, archive. The resulting capability specs live in `openspec/specs/` (`user-auth`, `password-recovery`,
-  `user-roles`, `user-profiles`, `user-directory`) and the history in `openspec/changes/archive/`.
+  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`) and the history in `openspec/changes/archive/`.
 
 ## 2. Item 1: authentication
 
@@ -89,21 +92,68 @@ are a classic source of vulnerabilities.
   manual `Content-Type` so the browser sets the multipart boundary. Avatar upload is a POST because PHP does not
   parse multipart bodies on PATCH.
 
-## 5. Tests
+## 5. Item 4: the chat room
 
-* **Backend (70 tests, 245 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
+**Flow of one message.** The browser `POST`s `/api/messages` (session cookie + CSRF) -> `can:send-messages` gate ->
+`StoreMessageRequest` validates -> the message is saved with the signed-in user as sender -> `NewMessage` is broadcast on
+the private channel `chat` to Reverb -> Reverb pushes it over the open WebSockets of every other tab -> `useChat` merges it
+into the list. The sender gets the same JSON in the HTTP response, so it is shown immediately and exactly once.
+
+**Why Reverb + Echo (decided in explore).** Polling is simple but laggy and wasteful, so it is not really real time.
+Server-Sent Events would hold a connection open per user and `php artisan serve` handles one request at a time, so the API
+would stall (and Laravel has no first-party SSE channel authorisation). Pusher or Ably need an external account. A Node
+socket.io sidecar adds a second language and a second auth system. Reverb is first-party, self-hosted, speaks the Pusher
+protocol (so `pusher-js` and Echo work unchanged) and authorises private channels with the session we already have. Item 5
+(alerts) will publish on the same connection, and chat keeps working during an alert because they are separate channels.
+
+**Backend**
+
+| File | What and why |
+|------|--------------|
+| `database/migrations/..._create_messages_table.php` | `user_id` (foreign key, cascade, indexed) + `body` text + timestamps. History is paged by `id`, so no extra index. |
+| `Models/Message.php` | Only `body` is `#[Fillable]`; the sender is set through `$user->messages()->create(...)`, so a request can never forge `user_id` (a test pins it). |
+| `Http/Requests/StoreMessageRequest.php` | `required|string|max:2000`. Laravel's `TrimStrings` middleware trims and turns a blank text into `null`, so whitespace-only fails `required`. |
+| `Http/Controllers/MessageController.php` | `index`: keyset pagination (`id < before`, newest first, `limit 51` to learn `has_more` without a count query, then reversed to chronological). Offset pages would shift and duplicate rows while new messages keep arriving. `store`: saves, then broadcasts with `toOthers()` inside a try/catch, so a Reverb outage never loses a saved message. |
+| `Http/Resources/MessageResource.php` | One shape for the HTTP responses **and** the broadcast. The sender exposes only id, name and picture. |
+| `Events/NewMessage.php` | `ShouldBroadcastNow` on `PrivateChannel('chat')`, name `message.created`. "Now" instead of queued: no queue worker process to run, one HTTP call to Reverb. Trade-off: the POST waits for that call (acceptable here, and failures are swallowed and reported). |
+| `routes/channels.php` | `Broadcast::channel('chat', ...)`: any signed-in user may listen. Writing is protected by the gate on the route. |
+| `bootstrap/app.php` | `withBroadcasting(..., ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum']])` exposes `POST /api/broadcasting/auth` under `/api`, so it goes through the existing proxy and uses the session cookie. |
+| `routes/api.php` | `GET /messages`, and `POST /messages` with `can:send-messages` + `throttle:30,1` (anti-flood). |
+| `docker-compose.yml` | New `reverb` service: same image, runs `php artisan reverb:start`. The API gets a healthcheck and `reverb` waits for it, so two containers never run `composer install` together on a fresh clone. |
+
+**Frontend**
+
+| File | What and why |
+|------|--------------|
+| `lib/echo.ts` | The only file that knows about WebSockets. Connects to the **page's own origin** (Vite forwards `/app` to Reverb: no CORS, no extra port). Channel authorisation uses a `headersProvider` that reads the `XSRF-TOKEN` cookie at each attempt, so a rotated token is never stale. Exposes `subscribeToChat({onMessage, onStatus})`. `disconnectEcho()` runs on sign-out. |
+| `api/client.ts` | Sends `X-Socket-ID` (Echo adds it by itself only for axios, not `fetch`), which lets the server's `toOthers()` skip the sender's own tab. |
+| `chat/useChat.ts` | State owner: history, live messages, send, load older, connection status. Messages are **merged by id** and sorted, so a message that arrives live and from history (or twice) shows once; this makes `toOthers()` an optimisation, not a correctness need. After a reconnect it refetches the latest page, which covers everything missed while offline. |
+| `components/ChatPanel.tsx` | Presentational: list (own messages right-aligned and coloured), offline notice, composer. Enter sends, Shift+Enter is a new line, Enter during IME composition does not send. Stays at the bottom for new messages, keeps position when older ones are inserted above. A failed send shows the server message and **keeps the text**. Text is rendered by React as text, so stored HTML is never executed. |
+| `pages/HomePage.tsx` | Shows the chat (composer disabled without `send-messages`) and the brief's 1 px white text element, as real page text (not `display: none`). |
+
+## 6. Tests
+
+
+* **Backend (99 tests, 337 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
   throttling, logout and 401, password reset (link target, unknown email, throttle, expired, reused or invalid token,
   weak password), gates for both roles, 401/403/200 enforcement, mass-assignment, profile validation per field,
   other-user and administrator 403, uploads (valid, replaced, removed, wrong type, wrong format, too large, too
-  small, too many pixels, missing), directory ordering, pagination and absence of private fields.
-* **Frontend (29 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart),
-  route guards, login/forgot/reset pages, profile page, people page, home page.
+  small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403).
+* **Frontend (52 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
+  route guards, login/forgot/reset pages, profile page, people page, home page (including the exact 1 px white text), Echo options
+  (own origin, fresh CSRF header), and the chat panel with a fake real-time layer (history, live message, no duplicates, send
+  by button/Enter/Shift+Enter, blank, server error keeps text, no ability, older messages, offline notice, catch-up after
+  reconnect, retry, HTML shown as text, unsubscribe on unmount).
 * Run them: `docker compose exec backend php artisan test` and `docker compose exec frontend npm test`.
 
-## 6. Trade-offs to mention
+## 7. Trade-offs to mention
 
 * Same-origin proxy and cookie sessions need a single-origin deployment in production (or Sanctum domain config).
 * Demo credentials are public by design; the seeder is for local use.
 * No image resizing or CDN: out of scope for the exercise, easy to add behind the avatar endpoint.
-* No email verification or registration: not in items 1 to 3.
+* No email verification or registration: not in items 1 to 4.
 * The per-ability gates are application-wide on purpose; per-resource rules (profiles) use a policy.
+* WebSocket server is one process (no Redis scaling) and chat is one room: right for the scope, and Reverb can scale
+  with Redis if ever needed.
+* Messages are plain text, never edited or deleted, and not moderated: out of scope.
+* The hidden 1 px white text is required by the brief; it is invisible and carries no interaction.

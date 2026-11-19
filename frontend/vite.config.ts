@@ -5,6 +5,9 @@ import { defineConfig } from 'vitest/config'
 // to Laravel. Same origin means no CORS and first-party cookies, which is what
 // session-based (Sanctum SPA) authentication needs later on.
 const target = process.env.API_PROXY_TARGET ?? 'http://localhost:8000'
+// Reverb (WebSocket server). The browser connects to /app/<key> on the Vite origin
+// and Vite upgrades and forwards it, so there is still a single origin.
+const wsTarget = process.env.WS_PROXY_TARGET ?? 'http://localhost:8080'
 
 export default defineConfig({
   plugins: [react()],
@@ -20,6 +23,7 @@ export default defineConfig({
       '/api': { target, changeOrigin: true },
       '/sanctum': { target, changeOrigin: true },
       '/storage': { target, changeOrigin: true },
+      '/app': { target: wsTarget, changeOrigin: true, ws: true },
     },
   },
 })

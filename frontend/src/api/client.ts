@@ -29,6 +29,23 @@ export function setUnauthorizedHandler(handler: (() => void) | null) {
   unauthorizedHandler = handler
 }
 
+let socketIdProvider: (() => string | undefined) | null = null
+
+/**
+ * Lets the real-time layer tell us this browser tab's WebSocket id. It is sent as
+ * `X-Socket-ID` so the server's `toOthers()` can skip this tab when it broadcasts
+ * (Echo only adds that header automatically for axios, not for fetch).
+ */
+export function setSocketIdProvider(provider: (() => string | undefined) | null) {
+  socketIdProvider = provider
+}
+
+/** CSRF header for requests the browser makes outside `api()` (e.g. channel authorisation). */
+export function csrfHeaders(): Record<string, string> {
+  const token = readCookie('XSRF-TOKEN')
+  return token ? { 'X-XSRF-TOKEN': token } : {}
+}
+
 function readCookie(name: string): string | null {
   const match = document.cookie.split('; ').find((entry) => entry.startsWith(`${name}=`))
   return match ? decodeURIComponent(match.slice(name.length + 1)) : null
@@ -49,6 +66,8 @@ async function send(path: string, init: ApiInit): Promise<Response> {
     const token = readCookie('XSRF-TOKEN')
     if (token) requestHeaders['X-XSRF-TOKEN'] = token
   }
+  const socketId = socketIdProvider?.()
+  if (socketId) requestHeaders['X-Socket-ID'] = socketId
 
   return fetch(`/api${path}`, {
     credentials: 'include',
