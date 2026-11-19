@@ -3,8 +3,7 @@
 Real-time chat application built for the EMERGENT3 Senior Software Engineer technical exercise
 (authentication, user roles, profiles, shared chat room, alerts with a 2×2 location map).
 
-> **Status:** base project only (scaffold, containers, database connection, frontend skeleton).
-> Features are added one at a time.
+> **Status:** authentication is done (login, logout, password recovery). Features are added one at a time.
 
 ## Technology choices
 
@@ -27,8 +26,13 @@ docker compose up -d --build
 docker compose exec backend php artisan migrate
 ```
 
+```bash
+docker compose exec backend php artisan db:seed
+```
+
 The first start installs Composer and npm dependencies and generates `APP_KEY`, so give it a minute.
-Seed command and demo credentials will be added with the authentication feature.
+
+**Demo account** (local development only): `user@example.com` / `password`.
 
 | Service        | URL |
 |----------------|-----|
@@ -40,7 +44,22 @@ Seed command and demo credentials will be added with the authentication feature.
 Ports can be changed through a root `.env` (see `.env.example`). PostgreSQL uses 5433 on the host to
 avoid clashing with a local server on 5432. If your host user is not UID/GID 1000, set `UID`/`GID` there.
 
-The home page shows "Frontend, API and database are connected" when everything works.
+## Authentication
+
+Session-based SPA authentication with Laravel Sanctum: the browser keeps an `HttpOnly` session cookie and sends a
+CSRF token (`X-XSRF-TOKEN`) on state-changing requests. Vite proxies `/api` and `/sanctum`, so everything is same-origin.
+
+| Endpoint                     | Purpose |
+|------------------------------|---------|
+| `GET /sanctum/csrf-cookie`   | Sets the CSRF cookie (the React client calls it automatically) |
+| `POST /api/login`            | Email + password; 5 failed attempts per email+IP are throttled |
+| `POST /api/logout`           | Ends the session (204) |
+| `GET /api/user`              | Current user, 401 when signed out |
+| `POST /api/forgot-password`  | Sends the reset email; same answer for unknown emails |
+| `POST /api/reset-password`   | Token + email + new password (min 8, confirmed) |
+
+**Password recovery:** request a link on `/forgot-password`, open the email in Mailpit
+(http://localhost:8025) and follow the link to `/reset-password`. Links expire after 60 minutes and work once.
 
 ## Tests and checks
 

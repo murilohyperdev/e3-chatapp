@@ -15,11 +15,11 @@ class DatabaseSeeder extends Seeder
      */
     public function run(): void
     {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
+        // Idempotent: running the seeder twice does not duplicate the demo account.
+        // Demo password is 'password' (local development only).
+        User::updateOrCreate(
+            ['email' => 'user@example.com'],
+            ['name' => 'Demo User', 'password' => 'password'],
+        );
     }
 }
