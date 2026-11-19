@@ -17,9 +17,9 @@
 
 ## 4. Frontend
 
-- [ ] 4.1 Add `api/alerts.ts`, `subscribeToAlerts` in `lib/echo.ts` and the pure `applySnapshot`; verify with unit tests: newer alert wins, higher revision wins, stale ignored, same revision idempotent.
-- [ ] 4.2 Add the `useAlert` hook (load current, live updates, refetch on reconnect, `start`, `end`, `pick` with error surfaced); verify with hook tests using a fake Echo: live start/pick/end, stale ignored, reconnect picks up an alert that ended while offline.
-- [ ] 4.3 Add `AlertModal` and `AlertBoard` and wire them with admin start/end controls into `HomePage`; verify with component tests: modal opens automatically and cannot be dismissed, closes after pick, shows server error and stays, not shown after picking or without `submit-locations`, board lists names (several in one square), ended notice, buttons per role, chat still rendered; then `npm test`, `npm run build`, `npm run lint`.
+- [x] 4.1 Add `api/alerts.ts`, `subscribeToAlerts` in `lib/echo.ts` and the pure `applySnapshot`; verify with unit tests: newer alert wins, higher revision wins, stale ignored, same revision idempotent.
+- [x] 4.2 Add the `useAlert` hook (load current, live updates, refetch on reconnect, `start`, `end`, `pick` with error surfaced); verify with hook tests using a fake Echo: live start/pick/end, stale ignored, reconnect picks up an alert that ended while offline.
+- [x] 4.3 Add `AlertModal` and `AlertBoard` and wire them with admin start/end controls into `HomePage`; verify with component tests: modal opens automatically and cannot be dismissed, closes after pick, shows server error and stays, not shown after picking or without `submit-locations`, board lists names (several in one square), ended notice, buttons per role, chat still rendered; then `npm test`, `npm run build`, `npm run lint`.
 
 ## 5. Docs and end-to-end check
 
