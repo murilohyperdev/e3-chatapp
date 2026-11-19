@@ -10,13 +10,28 @@ class SessionTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_current_user_endpoint_returns_the_signed_in_user_without_secrets(): void
+    public function test_current_user_endpoint_returns_a_regular_user_with_abilities(): void
     {
         $user = User::factory()->create();
 
         $this->actingAs($user)->getJson('/api/user')
             ->assertOk()
-            ->assertExactJson(['data' => ['id' => $user->id, 'name' => $user->name, 'email' => $user->email]]);
+            ->assertJsonPath('data.id', $user->id)
+            ->assertJsonPath('data.email', $user->email)
+            ->assertJsonPath('data.role', 'user')
+            ->assertJsonPath('data.abilities.send-messages', true)
+            ->assertJsonPath('data.abilities.start-alerts', false)
+            ->assertJsonPath('data.abilities.end-alerts', false)
+            ->assertJsonMissingPath('data.password');
+    }
+
+    public function test_current_user_endpoint_returns_an_administrator_with_all_abilities(): void
+    {
+        $this->actingAs(User::factory()->administrator()->create())->getJson('/api/user')
+            ->assertOk()
+            ->assertJsonPath('data.role', 'administrator')
+            ->assertJsonPath('data.abilities.start-alerts', true)
+            ->assertJsonPath('data.abilities.end-alerts', true);
     }
 
     public function test_current_user_endpoint_rejects_visitors(): void

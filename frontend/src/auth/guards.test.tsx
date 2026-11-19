@@ -29,7 +29,20 @@ function renderAt(path: string, value: Partial<AuthContextValue>) {
   )
 }
 
-const user = { id: 1, name: 'Jane', email: 'jane@example.com' }
+const user = {
+  id: 1,
+  name: 'Jane',
+  email: 'jane@example.com',
+  role: 'user' as const,
+  abilities: {
+    'send-messages': true,
+    'receive-alerts': true,
+    'submit-locations': true,
+    'view-locations': true,
+    'start-alerts': false,
+    'end-alerts': false,
+  },
+}
 
 describe('route guards', () => {
   it('sends visitors from a protected page to the login page', () => {

@@ -1,9 +1,23 @@
 import { api } from './client'
 
+export type UserRole = 'user' | 'administrator'
+
+// Mirrors the server's abilities. The UI only uses them to show or hide controls;
+// the server enforces every one of them on each request.
+export type Ability =
+  | 'send-messages'
+  | 'receive-alerts'
+  | 'submit-locations'
+  | 'view-locations'
+  | 'start-alerts'
+  | 'end-alerts'
+
 export interface User {
   id: number
   name: string
   email: string
+  role: UserRole
+  abilities: Record<Ability, boolean>
 }
 
 interface UserEnvelope {

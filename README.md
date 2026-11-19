@@ -32,7 +32,13 @@ docker compose exec backend php artisan db:seed
 
 The first start installs Composer and npm dependencies and generates `APP_KEY`, so give it a minute.
 
-**Demo account** (local development only): `user@example.com` / `password`.
+**Demo accounts** (local development only, all with password `password`):
+
+| Email | Type |
+|-------|------|
+| `admin@example.com` | Administrator |
+| `user@example.com` | User |
+| `grace@example.com`, `linus@example.com`, `margaret@example.com` | User |
 
 | Service        | URL |
 |----------------|-----|
@@ -43,6 +49,19 @@ The first start installs Composer and npm dependencies and generates `APP_KEY`, 
 
 Ports can be changed through a root `.env` (see `.env.example`). PostgreSQL uses 5433 on the host to
 avoid clashing with a local server on 5432. If your host user is not UID/GID 1000, set `UID`/`GID` there.
+
+## User types and permissions
+
+Each user has one `role`: `user` (default) or `administrator`. Permissions are Laravel Gates, one per ability, all
+answered by `UserRole::abilities()` (a single table). The server enforces them: protect a route with
+`->middleware(['auth:sanctum', 'can:start-alerts'])` and a user without the ability gets **403** (visitors get 401).
+The role is not mass assignable, so it cannot be changed through request input. `GET /api/user` returns `role` and an
+`abilities` map; the React UI uses it only to show or hide controls.
+
+| Ability | User | Administrator |
+|---------|:----:|:-------------:|
+| `send-messages`, `receive-alerts`, `submit-locations`, `view-locations` | yes | yes |
+| `start-alerts`, `end-alerts` | no | yes |
 
 ## Authentication
 

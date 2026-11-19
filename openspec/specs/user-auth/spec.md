@@ -39,11 +39,11 @@ The system SHALL end the current session when a signed-in user signs out.
 - **THEN** the system responds with no content and later requests from that session are treated as unauthenticated
 
 ### Requirement: Current user endpoint
-The system SHALL return the signed-in user's data on request and SHALL reject the request for visitors who are not signed in.
+The system SHALL return the signed-in user's data, including their type and the abilities that type grants, on request and SHALL reject the request for visitors who are not signed in.
 
 #### Scenario: Signed-in user
 - **WHEN** a signed-in user requests their own data
-- **THEN** the system returns the user's id, name and email, and never the password
+- **THEN** the system returns the user's id, name, email, type and abilities, and never the password
 
 #### Scenario: Visitor not signed in
 - **WHEN** a visitor who is not signed in requests the current user
