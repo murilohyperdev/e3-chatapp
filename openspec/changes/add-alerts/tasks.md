@@ -23,8 +23,8 @@
 
 ## 5. Docs and end-to-end check
 
-- [ ] 5.1 Update the README (endpoints, channel, event contract, constraints); run `php artisan test`, pint and a manual two-session check (administrator + user): modal appears live, names appear live in the chosen square, second pick refused, end stops picks, refresh restores state, new alert starts empty.
-- [ ] 5.2 Update `docs/WALKTHROUGH.md` and `docs/WALKTHROUGH.pt-BR.md` explaining the code and the reason for each decision, with the manual test steps.
+- [x] 5.1 Update the README (endpoints, channel, event contract, constraints); run `php artisan test`, pint and a manual two-session check (administrator + user): modal appears live, names appear live in the chosen square, second pick refused, end stops picks, refresh restores state, new alert starts empty.
+- [x] 5.2 Update `docs/WALKTHROUGH.md` and `docs/WALKTHROUGH.pt-BR.md` explaining the code and the reason for each decision, with the manual test steps.
 
 ## Workflow follow-up
 
