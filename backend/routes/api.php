@@ -1,5 +1,7 @@
 <?php
 
+use App\Http\Controllers\AlertController;
+use App\Http\Controllers\AlertResponseController;
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\DirectoryController;
@@ -47,4 +49,13 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/messages', [MessageController::class, 'index']);
     Route::post('/messages', [MessageController::class, 'store'])
         ->middleware(['can:send-messages', 'throttle:30,1']);
+
+    // Alerts. Each route names the ability it needs, so a direct request from someone
+    // without it is refused with 403 before any controller code runs.
+    Route::get('/alerts/current', [AlertController::class, 'current'])
+        ->middleware(['can:receive-alerts', 'can:view-locations']);
+    Route::post('/alerts', [AlertController::class, 'store'])->middleware('can:start-alerts');
+    Route::post('/alerts/{alert}/end', [AlertController::class, 'end'])->middleware('can:end-alerts');
+    Route::post('/alerts/{alert}/responses', [AlertResponseController::class, 'store'])
+        ->middleware('can:submit-locations');
 });
