@@ -200,13 +200,19 @@ where and a broadcast cannot be filtered per user. Tests call the endpoints dire
 4. In the administrator window click **Square B** too: both names are in Square B in both windows (squares can be shared).
 5. Send a chat message from each window while the alert is active: chat still works.
 6. Refresh the user window: no modal (already picked) and the board still shows both names.
-7. While the alert is active there is no Start button. A direct `POST /api/alerts` as the administrator answers 409, and as
-   the user it answers 403.
+7. Direct requests: while the alert is active there is no Start button. In the browser console of a signed-in window
+   (it carries the session cookie; the CSRF token is read from the cookie) run the snippet below. In the user window it
+   answers **403** (no `start-alerts`); in the administrator window it answers **409** (an alert is already active).
+   ```js
+   const t = decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN=')).split('=')[1])
+   fetch('/api/alerts', { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-XSRF-TOKEN': t } }).then((r) => r.status)
+   ```
 8. Press **End alert**: both windows show "This alert has ended" and further picks are refused (`POST .../responses`
    answers 409).
 9. Reconnection: press **Start alert** for a new alert, then stop Reverb (`docker compose stop reverb`) and end the alert in
-   the administrator window (this works, it is plain HTTP). The user window still shows it as active. Start Reverb again
-   (`docker compose start reverb`): after it reconnects the user window shows the ended alert by itself.
+   the administrator window (this works, it is plain HTTP, and answered in about 0.1 s even with Reverb down). The user window still
+   shows it as active. Start Reverb again (`docker compose start reverb`): the user window reconnects and shows the ended alert by itself
+   within a second or two (measured with a scripted two-browser run).
 10. Press **Start alert** again: the board is empty and everyone can pick again.
 
 ## 7. Tests

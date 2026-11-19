@@ -204,13 +204,19 @@ comum e como visitante.
    podem ser compartilhados).
 5. Envie uma mensagem de chat de cada janela com o alerta ativo: o chat continua funcionando.
 6. Recarregue a janela do usuário: não abre modal (já escolheu) e o painel ainda mostra os dois nomes.
-7. Enquanto o alerta está ativo não há botão Start. Um `POST /api/alerts` direto como administrador responde 409, e como
-   usuário comum responde 403.
+7. Requisições diretas: com o alerta ativo não há botão Start. No console do navegador de uma janela logada (ela leva o
+   cookie de sessão; o token CSRF é lido do cookie) rode o trecho abaixo. Na janela do usuário responde **403** (sem
+   `start-alerts`); na janela do administrador responde **409** (já existe um alerta ativo).
+   ```js
+   const t = decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN=')).split('=')[1])
+   fetch('/api/alerts', { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-XSRF-TOKEN': t } }).then((r) => r.status)
+   ```
 8. Clique em **End alert**: as duas janelas mostram "This alert has ended" e novas escolhas são recusadas
    (`POST .../responses` responde 409).
 9. Reconexão: clique em **Start alert** para um novo alerta, pare o Reverb (`docker compose stop reverb`) e encerre o
-   alerta na janela do administrador (funciona, é HTTP puro). A janela do usuário ainda o mostra como ativo. Suba o Reverb
-   de novo (`docker compose start reverb`): depois de reconectar, a janela do usuário mostra o alerta encerrado sozinha.
+   alerta na janela do administrador (funciona, é HTTP puro, e respondeu em cerca de 0,1 s mesmo com o Reverb fora do ar). A
+   janela do usuário ainda o mostra como ativo. Suba o Reverb de novo (`docker compose start reverb`): a janela do usuário
+   reconecta e mostra o alerta encerrado sozinha em um ou dois segundos (medido com um roteiro de dois navegadores).
 10. Clique em **Start alert** de novo: o painel está vazio e todos podem escolher outra vez.
 
 ## 7. Testes
