@@ -17,7 +17,8 @@ export class ApiError extends Error {
   }
 }
 
-type ApiInit = Omit<RequestInit, 'body'> & { json?: unknown }
+// `json` sends a JSON body; `form` sends multipart (uploads). Never set both.
+type ApiInit = Omit<RequestInit, 'body'> & { json?: unknown; form?: FormData }
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
@@ -39,7 +40,7 @@ async function ensureCsrfCookie(force = false) {
 }
 
 async function send(path: string, init: ApiInit): Promise<Response> {
-  const { json, headers, ...rest } = init
+  const { json, form, headers, ...rest } = init
   const method = (rest.method ?? 'GET').toUpperCase()
 
   const requestHeaders: Record<string, string> = { Accept: 'application/json' }
@@ -54,7 +55,8 @@ async function send(path: string, init: ApiInit): Promise<Response> {
     ...rest,
     method,
     headers: { ...requestHeaders, ...(headers as Record<string, string> | undefined) },
-    body: json === undefined ? undefined : JSON.stringify(json),
+    // For FormData we must NOT set Content-Type: the browser adds the multipart boundary.
+    body: form ?? (json === undefined ? undefined : JSON.stringify(json)),
   })
 }
 

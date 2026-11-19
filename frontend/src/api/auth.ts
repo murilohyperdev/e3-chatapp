@@ -16,6 +16,9 @@ export interface User {
   id: number
   name: string
   email: string
+  phone: string | null
+  address: string | null
+  avatar_url: string | null
   role: UserRole
   abilities: Record<Ability, boolean>
 }

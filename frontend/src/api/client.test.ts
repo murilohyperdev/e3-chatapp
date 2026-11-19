@@ -42,6 +42,19 @@ describe('api client', () => {
     expect(fetchMock.mock.calls[1][0]).toBe('/api/login')
   })
 
+  it('sends FormData without a JSON content type so the browser sets the boundary', async () => {
+    document.cookie = 'XSRF-TOKEN=abc'
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {}))
+    const form = new FormData()
+    form.append('avatar', new File(['x'], 'me.png', { type: 'image/png' }))
+
+    await api('/users/1/avatar', { method: 'POST', form })
+
+    const [, init] = fetchMock.mock.calls[0]
+    expect(init.body).toBe(form)
+    expect(init.headers['Content-Type']).toBeUndefined()
+  })
+
   it('does not send a CSRF header on GET requests', async () => {
     document.cookie = 'XSRF-TOKEN=abc'
     fetchMock.mockResolvedValueOnce(jsonResponse(200, {}))

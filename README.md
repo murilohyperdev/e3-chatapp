@@ -3,7 +3,7 @@
 Real-time chat application built for the EMERGENT3 Senior Software Engineer technical exercise
 (authentication, user roles, profiles, shared chat room, alerts with a 2×2 location map).
 
-> **Status:** authentication is done (login, logout, password recovery). Features are added one at a time.
+> **Status:** authentication, user types and profiles are done. Features are added one at a time.
 
 ## Technology choices
 
@@ -62,6 +62,19 @@ The role is not mass assignable, so it cannot be changed through request input. 
 |---------|:----:|:-------------:|
 | `send-messages`, `receive-alerts`, `submit-locations`, `view-locations` | yes | yes |
 | `start-alerts`, `end-alerts` | no | yes |
+
+## Profiles and directory
+
+| Endpoint | Purpose |
+|----------|---------|
+| `PATCH /api/users/{id}` | Edit name, phone, address. Owner only: anyone else (administrators included) gets 403 |
+| `POST /api/users/{id}/avatar` | Multipart upload, field `avatar` (JPG/PNG/WebP, max 2 MB, 64-4096 px per side) |
+| `DELETE /api/users/{id}/avatar` | Remove the picture |
+| `GET /api/users?page=N` | Directory, 12 per page, ordered by name: only id, name, picture and user type |
+
+Email and user type cannot be changed through these endpoints (extra fields are ignored). Pictures are stored on the
+`public` disk (`storage/app/public/avatars`, served from `/storage` through the `storage:link` the container creates
+on start); replacing or removing a picture deletes the old file. The directory never includes email, phone or address.
 
 ## Authentication
 

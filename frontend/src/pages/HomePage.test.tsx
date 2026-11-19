@@ -15,7 +15,7 @@ const baseAbilities = {
 
 function renderHome(user: User) {
   return render(
-    <AuthContext.Provider value={{ status: 'authenticated', user, signIn: vi.fn(), signOut: vi.fn() }}>
+    <AuthContext.Provider value={{ status: 'authenticated', user, signIn: vi.fn(), signOut: vi.fn(), updateUser: vi.fn() }}>
       <HomePage />
     </AuthContext.Provider>,
   )
@@ -23,7 +23,7 @@ function renderHome(user: User) {
 
 describe('HomePage', () => {
   it('shows a regular user without administrator controls', () => {
-    renderHome({ id: 1, name: 'Jane', email: 'j@example.com', role: 'user', abilities: baseAbilities })
+    renderHome({ id: 1, name: 'Jane', email: 'j@example.com', role: 'user', phone: null, address: null, avatar_url: null, abilities: baseAbilities })
 
     expect(screen.getByText('User')).toBeInTheDocument()
     expect(screen.queryByText(/start and end alerts/i)).not.toBeInTheDocument()
@@ -35,6 +35,9 @@ describe('HomePage', () => {
       name: 'Ada',
       email: 'a@example.com',
       role: 'administrator',
+      phone: null,
+      address: null,
+      avatar_url: null,
       abilities: { ...baseAbilities, 'start-alerts': true, 'end-alerts': true },
     })
 

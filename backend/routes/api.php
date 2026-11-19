@@ -2,6 +2,8 @@
 
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\DirectoryController;
+use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -34,4 +36,9 @@ Route::post('/reset-password', [PasswordResetController::class, 'reset']);
 Route::middleware('auth:sanctum')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::get('/user', [AuthController::class, 'me']);
+
+    Route::get('/users', [DirectoryController::class, 'index']);
+    Route::patch('/users/{user}', [ProfileController::class, 'update']);
+    Route::post('/users/{user}/avatar', [ProfileController::class, 'uploadAvatar']);
+    Route::delete('/users/{user}/avatar', [ProfileController::class, 'deleteAvatar']);
 });

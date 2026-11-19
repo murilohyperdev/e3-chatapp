@@ -15,7 +15,7 @@ const signIn = vi.fn()
 
 function renderLogin() {
   return render(
-    <AuthContext.Provider value={{ status: 'unauthenticated', user: null, signIn, signOut: vi.fn() }}>
+    <AuthContext.Provider value={{ status: 'unauthenticated', user: null, signIn, signOut: vi.fn(), updateUser: vi.fn() }}>
       <MemoryRouter initialEntries={['/login']}>
         <Routes>
           <Route path="/login" element={<LoginPage />} />

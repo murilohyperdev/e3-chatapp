@@ -10,6 +10,7 @@ function renderAt(path: string, value: Partial<AuthContextValue>) {
     user: null,
     signIn: async () => {},
     signOut: async () => {},
+    updateUser: () => {},
     ...value,
   }
 
@@ -34,6 +35,9 @@ const user = {
   name: 'Jane',
   email: 'jane@example.com',
   role: 'user' as const,
+  phone: null,
+  address: null,
+  avatar_url: null,
   abilities: {
     'send-messages': true,
     'receive-alerts': true,
