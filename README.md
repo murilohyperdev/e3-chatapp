@@ -95,8 +95,15 @@ Live event: private channel `chat`, event `message.created`, payload identical t
 ignored) and senders never expose email, phone or address.
 
 **Existing checkout?** `backend/.env` is only created on a fresh clone, so copy the new `BROADCAST_CONNECTION` and
-`REVERB_*` lines from `backend/.env.example` into it, then run `docker compose up -d --build` and
-`docker compose exec backend php artisan migrate`.
+`REVERB_*` lines from `backend/.env.example` into it. The containers only install dependencies when they are
+missing, so also run:
+
+```bash
+docker compose up -d --build
+docker compose exec backend composer install
+docker compose exec frontend npm ci
+docker compose exec backend php artisan migrate
+```
 
 The main page also carries a 1 px white text element required by the exercise brief.
 

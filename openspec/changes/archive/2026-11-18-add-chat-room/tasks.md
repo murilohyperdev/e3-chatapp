@@ -28,4 +28,4 @@
 
 ## Workflow follow-up
 
-- Commit locally on `feature/chat-room`, ask for confirmation before pushing and merging, then run `/opsx:archive` for this change.
+- Committed locally on `feature/chat-room`; push and merge only after the person confirms.
