@@ -1,5 +1,6 @@
 import { Box, Chip, Stack, Typography } from '@mui/material'
 import { useAuth } from '../auth/useAuth'
+import { AlertSection } from '../components/AlertSection'
 import { ChatPanel } from '../components/ChatPanel'
 
 // Text required by the brief: present on the main page, 1px and white.
@@ -20,6 +21,8 @@ export default function HomePage() {
         <Chip label={user.role === 'administrator' ? 'Administrator' : 'User'} color="primary" />
         {user.abilities['start-alerts'] && <Chip label="Can start and end alerts" variant="outlined" />}
       </Stack>
+
+      <AlertSection user={user} />
 
       <ChatPanel currentUserId={user.id} canSend={user.abilities['send-messages']} />
 

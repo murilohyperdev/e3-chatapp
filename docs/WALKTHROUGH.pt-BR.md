@@ -1,4 +1,4 @@
-# Explicação do código (itens 1 a 4)
+# Explicação do código (itens 1 a 5)
 
 Notas para a entrevista: o que cada parte faz e por que foi feita assim. Versão em inglês: [WALKTHROUGH.md](WALKTHROUGH.md).
 
@@ -22,7 +22,7 @@ Servidor WebSocket Reverb (:8080) <-+
   JavaScript não consegue ler; assim, uma falha de XSS não rouba token. Revogar é só encerrar a sessão.
 * **Fluxo orientado a especificação.** Cada item passou pelo OpenSpec: explore, propose (proposta, specs, design,
   tarefas), apply e archive. As specs de cada capacidade ficam em `openspec/specs/` (`user-auth`, `password-recovery`,
-  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`) e o histórico em `openspec/changes/archive/`.
+  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`, `alert-lifecycle`, `alert-locations`, `alert-realtime`, `alert-page`) e o histórico em `openspec/changes/archive/`.
 
 ## 2. Item 1: autenticação
 
@@ -105,7 +105,7 @@ tempo real de verdade. Server-Sent Events manteriam uma conexão aberta por usu�
 requisição por vez, então a API travaria (e o Laravel não tem autorização de canal para SSE nativa). Pusher e Ably exigem
 conta externa. Um sidecar Node com socket.io traz uma segunda linguagem e um segundo sistema de autenticação. O Reverb é
 oficial, roda em casa, fala o protocolo Pusher (então `pusher-js` e Echo funcionam sem adaptação) e autoriza canais
-privados com a sessão que já existe. O item 5 (alertas) vai publicar na mesma conexão, e o chat continua funcionando
+privados com a sessão que já existe. O item 5 (alertas) publica na mesma conexão, e o chat continua funcionando
 durante um alerta porque são canais separados.
 
 **Backend**
@@ -133,10 +133,96 @@ durante um alerta porque são canais separados.
 | `components/ChatPanel.tsx` | Apresentação: lista (minhas mensagens à direita e coloridas), aviso de offline, campo de envio. Enter envia, Shift+Enter quebra linha, Enter durante composição (IME) não envia. Fica no fim da lista para mensagens novas e mantém a posição quando antigas são inseridas acima. Um envio com erro mostra a mensagem do servidor e **mantém o texto**. O texto é renderizado pelo React como texto, então HTML guardado nunca é executado. |
 | `pages/HomePage.tsx` | Mostra o chat (campo desabilitado sem `send-messages`) e o texto branco de 1 px exigido pelo enunciado, como texto real da página (não `display: none`). |
 
-## 6. Testes
+## 6. Item 5: alertas e localização
+
+**Fluxo.** O administrador clica em *Start alert*: `POST /api/alerts` -> gate `can:start-alerts` -> uma linha é inserida em
+`alerts` -> `AlertChanged` é transmitido no canal privado `alerts` -> toda sessão aberta recebe o alerta completo e o
+`AlertModal` abre sozinho. Cada pessoa clica num quadrado: `POST /api/alerts/{alert}/responses` -> `can:submit-locations`
+-> a linha do alerta é travada, confere-se "ainda ativo", a resposta é salva e o `revision` sobe -> `AlertChanged` de novo
+-> todas as sessões redesenham o painel com o nome dentro do quadrado. *End alert* (`POST /api/alerts/{alert}/end`, gate
+`can:end-alerts`) faz o mesmo caminho e fecha as escolhas. O chat é outro canal e não é tocado.
+
+**A ideia central: snapshots, não deltas.** Cada evento e cada resposta HTTP é o alerta *inteiro* (status, revisão, quem
+está em qual quadrado). O cliente só precisa responder "qual snapshot é o mais novo?" (`applySnapshot`: vence o maior id de
+alerta e, no mesmo alerta, o maior `revision`). Assim uma mensagem duplicada, atrasada ou fora de ordem é inofensiva, e
+recuperar-se de uma conexão perdida é só chamar `GET /api/alerts/current`. Deltas ("Bob escolheu B") exigiriam ordenação e
+detecção de lacunas, e a reconexão precisaria de um refetch de qualquer jeito.
+
+**As regras ficam no banco.** Checagens em PHP não bastam quando duas requisições disputam, então:
+
+| Regra | Onde é garantida |
+|-------|------------------|
+| Um único alerta ativo | Índice único parcial `CREATE UNIQUE INDEX alerts_single_active ON alerts ((true)) WHERE ended_at IS NULL`: toda linha ativa tem a mesma chave constante, então a segunda é recusada. Numa disputa, uma recebe 201 e a outra 409. |
+| Uma resposta por usuário por alerta | `UNIQUE (alert_id, user_id)`. O controller transforma a violação em 409 ("a primeira escolha é definitiva"). |
+| Só quadrados a a d | `CHECK (square IN ('a','b','c','d'))` mais o enum `Square` para validação. |
+| Nenhuma escolha depois do fim | `SELECT ... FOR UPDATE` na linha do alerta dentro de uma transação, tanto em "escolher" quanto em "encerrar": a escolha ou entra antes do fim ou espera, vê `ended_at` preenchido e recebe 409. |
+| Alerta novo começa vazio | As respostas pertencem a um `alert_id`; um alerta novo é uma linha nova sem respostas. |
+
+"Ativo" é apenas `ended_at IS NULL`; uma coluna `status` separada poderia discordar do timestamp, então não existe.
+
+**Permissões (no servidor, inclusive em requisições diretas).** Cada rota declara sua ability por middleware `can:`, então
+quem não tem recebe 403 antes de qualquer código do controller: iniciar `start-alerts`, encerrar `end-alerts`, escolher
+`submit-locations` e ler (`GET /alerts/current` e o canal) `receive-alerts` **e** `view-locations`, porque o payload diz
+quem está onde e um broadcast não pode ser filtrado por usuário. Os testes chamam os endpoints diretamente como usuário
+comum e como visitante.
+
+**Backend**
+
+| Arquivo | O quê e por quê |
+|---------|-----------------|
+| `database/migrations/..._create_alerts_table.php` | `alerts` (`started_by`, `ended_by` com `nullOnDelete` para o histórico sobreviver à exclusão de um admin, `ended_at`, `revision`) e `alert_responses` (FKs com cascade, par único, CHECK). |
+| `Enums/Square.php` | As quatro chaves. Os rótulos ("Square A") pertencem à interface. |
+| `Models/Alert.php`, `Models/AlertResponse.php` | `Alert` não tem nada em mass assignment (o servidor define quem/quando). `AlertResponse` só permite `square`; pessoa e alerta vêm da sessão e da rota, então o corpo não consegue forjá-los. |
+| `Http/Controllers/AlertController.php` | `current` (último alerta, ativo ou encerrado, ou `data: null`), `store` (captura a violação de unicidade -> 409), `end` (travado, 409 se já encerrado). |
+| `Http/Controllers/AlertResponseController.php` | Trava o alerta, rejeita alerta encerrado (409), salva a escolha, incrementa `revision` e converte a violação de unicidade em 409. |
+| `Http/Requests/StoreAlertResponseRequest.php` | `square` obrigatório e um dos valores do enum. |
+| `Http/Resources/AlertResource.php` | O único formato de snapshot para HTTP e broadcast. As pessoas expõem só id, nome e foto. |
+| `Events/AlertChanged.php` | `ShouldBroadcastNow` em `private-alerts`, nome `alert.changed`. `announce()` envolve o broadcast em try/catch: a mudança já foi salva, então uma queda do Reverb é registrada, não vira falha da requisição. Sem `toOthers()`: os snapshots são idempotentes, então quem enviou pode ser atualizado pelo mesmo evento dos outros. |
+| `routes/channels.php` | Canal `alerts`: exige `receive-alerts` e `view-locations`. |
+
+**Frontend**
+
+| Arquivo | O quê e por quê |
+|---------|-----------------|
+| `api/alerts.ts` | Tipos, os quatro quadrados com rótulos e as quatro chamadas. |
+| `alerts/applySnapshot.ts` | A regra pura "o mais novo vence" (testada isoladamente). |
+| `alerts/useAlert.ts` | Dono do estado: carrega `/current`, assina o canal, aplica snapshots, rebusca depois de reconectar (é assim que um alerta encerrado enquanto estava offline aparece) e expõe `start`, `end`, `pick`. Uma primeira carga que devolve `null` nunca apaga um alerta que um evento ao vivo já entregou. |
+| `lib/echo.ts` | Novo `subscribeToAlerts`; o código de status da conexão foi extraído para chat e alertas compartilharem. |
+| `components/AlertModal.tsx` | `Dialog` do MUI sem `onClose`, então Esc e clique fora não fazem nada: a pessoa precisa escolher. Abre só para alerta *ativo* quando o usuário pode enviar e ainda não escolheu; assim, recarregar antes de escolher abre de novo, e depois de escolher fica fechado. Um erro do servidor aparece e o modal continua aberto. |
+| `components/AlertBoard.tsx` | A grade 2x2 com o rótulo de cada quadrado e os nomes dentro (vários por quadrado), mais o aviso "ativo / encerrado". |
+| `components/AlertSection.tsx` | Junta hook + painel + modal + os botões Start/End do administrador (só com `start-alerts` / `end-alerts`). O hook mora aqui, não no modal, para a assinatura continuar aberta com o modal fechado. |
+| `pages/HomePage.tsx` | Renderiza `AlertSection` acima do chat, então o chat segue utilizável durante um alerta. |
+
+**Teste manual com duas sessões** (stack rodando, dados demo carregados):
+
+1. Abra <http://localhost:5173> numa janela normal e entre como `admin@example.com` / `password`. Abra uma janela anônima
+   (cookies separados) e entre como `user@example.com` / `password`.
+2. Na janela do administrador clique em **Start alert**. As duas janelas abrem o modal com Square A a D sozinhas.
+3. Na janela do usuário clique em **Square B**: o modal fecha e "Demo User (you)" aparece no Square B. Na janela do
+   administrador o nome "Demo User" aparece no Square B sem recarregar.
+4. Na janela do administrador clique em **Square B** também: os dois nomes ficam no Square B nas duas janelas (quadrados
+   podem ser compartilhados).
+5. Envie uma mensagem de chat de cada janela com o alerta ativo: o chat continua funcionando.
+6. Recarregue a janela do usuário: não abre modal (já escolheu) e o painel ainda mostra os dois nomes.
+7. Requisições diretas: com o alerta ativo não há botão Start. No console do navegador de uma janela logada (ela leva o
+   cookie de sessão; o token CSRF é lido do cookie) rode o trecho abaixo. Na janela do usuário responde **403** (sem
+   `start-alerts`); na janela do administrador responde **409** (já existe um alerta ativo).
+   ```js
+   const t = decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN=')).split('=')[1])
+   fetch('/api/alerts', { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-XSRF-TOKEN': t } }).then((r) => r.status)
+   ```
+8. Clique em **End alert**: as duas janelas mostram "This alert has ended" e novas escolhas são recusadas
+   (`POST .../responses` responde 409).
+9. Reconexão: clique em **Start alert** para um novo alerta, pare o Reverb (`docker compose stop reverb`) e encerre o
+   alerta na janela do administrador (funciona, é HTTP puro, e respondeu em cerca de 0,1 s mesmo com o Reverb fora do ar). A
+   janela do usuário ainda o mostra como ativo. Suba o Reverb de novo (`docker compose start reverb`): a janela do usuário
+   reconecta e mostra o alerta encerrado sozinha em um ou dois segundos (medido com um roteiro de dois navegadores).
+10. Clique em **Start alert** de novo: o painel está vazio e todos podem escolher outra vez.
+
+## 7. Testes
 
 
-* **Backend (99 testes, 337 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
+* **Backend (141 testes, 469 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
   limite de tentativas, logout e 401, redefinição de senha (destino do link, e-mail desconhecido, limite, token
   expirado, reutilizado ou inválido, senha fraca), gates para os dois papéis, imposição de 401/403/200, atribuição em
   massa, validação de cada campo do perfil, 403 para outro usuário e para administrador, uploads (válido, substituído,
@@ -145,16 +231,16 @@ durante um alerta porque são canais separados.
   remetente forjado, 403 sem a habilidade, 401), histórico (vazio, ordem, 50 por página, `before`, `has_more`, cursor
   inválido, sem campos privados, sem N+1, 401), broadcast (canal/nome/conteúdo certos, mesmo formato da resposta HTTP,
   nada em caso de falha, broadcaster fora do ar continua 201 e salva) e autorização do canal (membro assinado, visitante
-  401, outros canais 403).
-* **Frontend (52 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
+  401, outros canais 403); alertas: iniciar (administrador 201 e vazio, usuário comum 403 e nada criado, visitante 401, segundo alerta ativo 409, alerta novo depois do fim começa vazio), atual (nenhum, ativo com respostas, encerrado enquanto offline, só o último, sem campos privados, 401), escolher (válido, administrador também, quadrado compartilhado, segunda escolha 409 e a primeira mantida, de novo em outro alerta, quadrado inválido/ausente/maiúsculo/array 422, alerta encerrado 409, alerta inexistente 404, pessoa forjada ignorada, 403 sem a habilidade, 401), encerrar (respostas mantidas, duas vezes 409, 403 para usuário, 401, 404, escolha depois do fim recusada), constraints do banco acionadas com inserts diretos (segundo alerta ativo, resposta duplicada, quadrado fora de a a d, cascatas, mass assignment), broadcast (canal/nome/snapshot, revisão, nada em requisição rejeitada, broadcaster fora do ar continua funcionando) e o canal `alerts` (usuário permitido, sem habilidade 403, visitante 401). Duas requisições realmente simultâneas são cobertas pelas constraints do banco, não por um teste concorrente.
+* **Frontend (89 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
   401, multipart, cabeçalho do socket), guards de rota, páginas de login/esqueci a senha/redefinir, página de perfil, de
   pessoas e inicial (incluindo o texto exato branco de 1 px), opções do Echo (origem própria, CSRF atualizado) e o painel de
   chat com uma camada de tempo real falsa (histórico, mensagem ao vivo, sem duplicar, envio por botão/Enter/Shift+Enter,
   em branco, erro do servidor mantém o texto, sem habilidade, mensagens antigas, aviso offline, recuperação após
-  reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar).
+  reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar); alertas: `applySnapshot` (id mais novo, revisão maior, antigo ignorado, idempotente), `useAlert` com Echo falso (início ao vivo, antigo ignorado, primeira carga vazia não apaga alerta ao vivo, recuperação de alerta encerrado offline, ações, erros, tentar de novo), `AlertModal` (quatro quadrados rotulados, escolha, não fecha com Esc, erro do servidor mantém aberto, fechado depois de escolher / encerrado / sem habilidade), `AlertBoard` (nomes nos quadrados, quadrados compartilhados, aviso de encerrado) e `AlertSection` (modal abre ao vivo, nome aparece depois de escolher, recarregar restaura, encerrar fecha o modal, controles por papel, nada para quem não pode receber alertas).
 * Para rodar: `docker compose exec backend php artisan test` e `docker compose exec frontend npm test`.
 
-## 7. Trade-offs para mencionar
+## 8. Trade-offs para mencionar
 
 * Proxy de mesma origem e sessão por cookie pedem implantação com origem única em produção (ou configuração de
   domínios do Sanctum).
@@ -166,3 +252,7 @@ durante um alerta porque são canais separados.
   escala com Redis se um dia for preciso.
 * As mensagens são texto simples, nunca editadas nem apagadas e sem moderação: fora do escopo.
 * O texto branco de 1 px é exigido pelo enunciado; é invisível e não tem interação.
+* Alertas: a primeira escolha é definitiva (o enunciado diz uma resposta por usuário por alerta); trocar a escolha seria um upsert, mas é outra regra.
+* Ler o estado do alerta exige `receive-alerts` e `view-locations` porque um único payload de broadcast vai para todos e diz quem está onde.
+* O índice `alerts_single_active` é um índice parcial por expressão específico do Postgres; o projeto só usa Postgres, e o banco é o único lugar que não sofre corrida.
+* Um alerta encerrado fica no painel como "encerrado" até um novo começar; esconder alertas antigos é refinamento de interface, não problema de dados.

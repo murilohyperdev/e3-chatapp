@@ -1,6 +1,7 @@
 import Echo from 'laravel-echo'
 import Pusher from 'pusher-js'
 import { csrfHeaders, setSocketIdProvider } from '../api/client'
+import type { AlertSnapshot } from '../api/alerts'
 import type { ChatMessage } from '../api/messages'
 
 // Real-time layer. Everything that knows about WebSockets lives in this file, so
@@ -61,6 +62,15 @@ const STATE_TO_STATUS: Record<string, ConnectionStatus> = {
   disconnected: 'offline',
 }
 
+/** Reports the connection state now and on every change; returns the function that stops it. */
+function watchConnection(instance: Echo<'reverb'>, onStatus: (status: ConnectionStatus) => void): () => void {
+  const connection = instance.connector.pusher.connection
+  const onStateChange = ({ current }: { current: string }) => onStatus(STATE_TO_STATUS[current] ?? 'connecting')
+  connection.bind('state_change', onStateChange)
+  onStatus(STATE_TO_STATUS[connection.state] ?? 'connecting')
+  return () => connection.unbind('state_change', onStateChange)
+}
+
 interface ChatSubscription {
   onMessage: (message: ChatMessage) => void
   onStatus: (status: ConnectionStatus) => void
@@ -69,17 +79,31 @@ interface ChatSubscription {
 /** Listens to the private `chat` channel; returns a function that stops listening. */
 export function subscribeToChat({ onMessage, onStatus }: ChatSubscription): () => void {
   const instance = getEcho()
-  const connection = instance.connector.pusher.connection
-
-  const onStateChange = ({ current }: { current: string }) => onStatus(STATE_TO_STATUS[current] ?? 'connecting')
-  connection.bind('state_change', onStateChange)
-  onStatus(STATE_TO_STATUS[connection.state] ?? 'connecting')
+  const stopWatching = watchConnection(instance, onStatus)
 
   // The leading dot means "use this exact event name" (broadcastAs on the server).
   instance.private('chat').listen('.message.created', onMessage)
 
   return () => {
-    connection.unbind('state_change', onStateChange)
+    stopWatching()
     instance.leave('chat')
+  }
+}
+
+interface AlertSubscription {
+  onAlert: (alert: AlertSnapshot) => void
+  onStatus: (status: ConnectionStatus) => void
+}
+
+/** Listens to the private `alerts` channel (full alert snapshots); returns a function that stops listening. */
+export function subscribeToAlerts({ onAlert, onStatus }: AlertSubscription): () => void {
+  const instance = getEcho()
+  const stopWatching = watchConnection(instance, onStatus)
+
+  instance.private('alerts').listen('.alert.changed', onAlert)
+
+  return () => {
+    stopWatching()
+    instance.leave('alerts')
   }
 }

@@ -9,6 +9,10 @@ vi.mock('../components/ChatPanel', () => ({
   ChatPanel: ({ canSend }: { canSend: boolean }) => <div data-testid="chat" data-can-send={canSend} />,
 }))
 
+vi.mock('../components/AlertSection', () => ({
+  AlertSection: () => <div data-testid="alerts" />,
+}))
+
 const baseAbilities = {
   'send-messages': true,
   'receive-alerts': true,
@@ -48,6 +52,11 @@ describe('HomePage', () => {
 
     expect(screen.getByText('Administrator')).toBeInTheDocument()
     expect(screen.getByText(/start and end alerts/i)).toBeInTheDocument()
+  })
+
+  it('shows the alerts section above the chat', () => {
+    renderHome({ id: 1, name: 'Jane', email: 'j@example.com', role: 'user', phone: null, address: null, avatar_url: null, abilities: baseAbilities })
+    expect(screen.getByTestId('alerts').compareDocumentPosition(screen.getByTestId('chat'))).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('shows the chat and tells it whether the user may send', () => {

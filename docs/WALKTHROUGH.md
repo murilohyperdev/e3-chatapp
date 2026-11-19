@@ -1,4 +1,4 @@
-# Codebase walkthrough (items 1 to 4)
+# Codebase walkthrough (items 1 to 5)
 
 Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
@@ -22,7 +22,7 @@ Reverb WebSocket server (:8080)  <----+
   cannot read, so an XSS bug cannot steal a token. Revocation is just ending the session.
 * **Spec-driven workflow.** Every item went through OpenSpec: explore, propose (proposal, specs, design, tasks),
   apply, archive. The resulting capability specs live in `openspec/specs/` (`user-auth`, `password-recovery`,
-  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`) and the history in `openspec/changes/archive/`.
+  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`, `alert-lifecycle`, `alert-locations`, `alert-realtime`, `alert-page`) and the history in `openspec/changes/archive/`.
 
 ## 2. Item 1: authentication
 
@@ -104,7 +104,7 @@ Server-Sent Events would hold a connection open per user and `php artisan serve`
 would stall (and Laravel has no first-party SSE channel authorisation). Pusher or Ably need an external account. A Node
 socket.io sidecar adds a second language and a second auth system. Reverb is first-party, self-hosted, speaks the Pusher
 protocol (so `pusher-js` and Echo work unchanged) and authorises private channels with the session we already have. Item 5
-(alerts) will publish on the same connection, and chat keeps working during an alert because they are separate channels.
+(alerts) publishes on the same connection, and chat keeps working during an alert because they are separate channels.
 
 **Backend**
 
@@ -131,22 +131,106 @@ protocol (so `pusher-js` and Echo work unchanged) and authorises private channel
 | `components/ChatPanel.tsx` | Presentational: list (own messages right-aligned and coloured), offline notice, composer. Enter sends, Shift+Enter is a new line, Enter during IME composition does not send. Stays at the bottom for new messages, keeps position when older ones are inserted above. A failed send shows the server message and **keeps the text**. Text is rendered by React as text, so stored HTML is never executed. |
 | `pages/HomePage.tsx` | Shows the chat (composer disabled without `send-messages`) and the brief's 1 px white text element, as real page text (not `display: none`). |
 
-## 6. Tests
+## 6. Item 5: alerts and locations
+
+**Flow.** An administrator presses *Start alert*: `POST /api/alerts` -> `can:start-alerts` gate -> a row is inserted in
+`alerts` -> `AlertChanged` is broadcast on the private channel `alerts` -> every open session receives the full alert
+and `AlertModal` opens by itself. Each person clicks a square: `POST /api/alerts/{alert}/responses` -> `can:submit-locations`
+-> the alert row is locked, checked "still active", the response is stored, `revision` goes up -> `AlertChanged` again ->
+every session redraws the board with the name inside the square. *End alert* (`POST /api/alerts/{alert}/end`, gate
+`can:end-alerts`) does the same dance and closes the picks. Chat is a different channel and is not touched.
+
+**The central idea: snapshots, not deltas.** Every event and every HTTP response is the *whole* alert (status,
+revision, who is in which square). The client only has to answer "which snapshot is newest?" (`applySnapshot`: higher
+alert id wins, then higher `revision`). So a duplicate, late or reordered message is harmless, and recovering from a lost
+connection is just `GET /api/alerts/current`. Deltas ("Bob picked B") would need ordering and gap detection, and reconnect
+would need a refetch anyway.
+
+**Rules live in the database.** PHP checks are not enough when two requests race, so:
+
+| Rule | Where it is enforced |
+|------|----------------------|
+| One active alert | Partial unique index `CREATE UNIQUE INDEX alerts_single_active ON alerts ((true)) WHERE ended_at IS NULL`: every active row has the same constant key, so a second one is refused. A race gives one 201 and one 409. |
+| One response per user per alert | `UNIQUE (alert_id, user_id)`. The controller turns the violation into 409 ("first pick is final"). |
+| Only squares a to d | `CHECK (square IN ('a','b','c','d'))` plus the `Square` enum for validation. |
+| No pick after the end | `SELECT ... FOR UPDATE` on the alert row inside a transaction in both "pick" and "end": a pick either commits before the end or waits, sees `ended_at` set and gets 409. |
+| New alert starts empty | Responses belong to an `alert_id`; a new alert is a new row with no responses. |
+
+"Active" is just `ended_at IS NULL`; a separate `status` column could disagree with the timestamp, so there is none.
+
+**Permissions (server side, direct requests too).** Each route names its ability through `can:` middleware, so someone
+without it gets 403 before any controller code runs: start `start-alerts`, end `end-alerts`, pick `submit-locations`, and
+read (`GET /alerts/current` and the channel) `receive-alerts` **and** `view-locations`, because the payload says who is
+where and a broadcast cannot be filtered per user. Tests call the endpoints directly as a regular user and as a visitor.
+
+**Backend**
+
+| File | What and why |
+|------|--------------|
+| `database/migrations/..._create_alerts_table.php` | `alerts` (`started_by`, `ended_by` with `nullOnDelete` so history outlives a deleted admin, `ended_at`, `revision`) and `alert_responses` (cascade FKs, unique pair, CHECK). |
+| `Enums/Square.php` | The four keys. Labels ("Square A") belong to the UI. |
+| `Models/Alert.php`, `Models/AlertResponse.php` | `Alert` has nothing mass assignable (the server sets who/when). `AlertResponse` only allows `square`; person and alert come from the session and the route, so the body cannot forge them. |
+| `Http/Controllers/AlertController.php` | `current` (latest alert, active or ended, or `data: null`), `store` (catches the unique violation -> 409), `end` (locked, 409 if already ended). |
+| `Http/Controllers/AlertResponseController.php` | Locks the alert, rejects ended alerts (409), stores the pick, bumps `revision`, maps the unique violation to 409. |
+| `Http/Requests/StoreAlertResponseRequest.php` | `square` required and one of the enum values. |
+| `Http/Resources/AlertResource.php` | The one snapshot shape for HTTP and broadcast. People expose only id, name and picture. |
+| `Events/AlertChanged.php` | `ShouldBroadcastNow` on `private-alerts`, name `alert.changed`. `announce()` wraps the broadcast in try/catch: the change is already saved, so a Reverb outage is logged, not turned into a failed request. No `toOthers()`: snapshots are idempotent, so the sender can be driven by the same event as everyone else. |
+| `routes/channels.php` | `alerts` channel: needs `receive-alerts` and `view-locations`. |
+
+**Frontend**
+
+| File | What and why |
+|------|--------------|
+| `api/alerts.ts` | Types, the four squares with labels, and the four calls. |
+| `alerts/applySnapshot.ts` | The pure "newest wins" rule (unit tested on its own). |
+| `alerts/useAlert.ts` | State owner: loads `/current`, subscribes, applies snapshots, refetches after a reconnect (this is how an alert that ended while offline shows up), exposes `start`, `end`, `pick`. A first load that returns `null` never erases an alert a live event already delivered. |
+| `lib/echo.ts` | New `subscribeToAlerts`; the connection-status code was extracted so chat and alerts share it. |
+| `components/AlertModal.tsx` | MUI `Dialog` with no `onClose`, so Escape and clicking outside do nothing: the person must pick. It opens only for an *active* alert when the user may submit and has not picked, so a reload before picking opens it again, and after picking it stays closed. A server error is shown and the modal stays open. |
+| `components/AlertBoard.tsx` | The 2x2 grid with each square's label and the names inside it (several per square), and an "active / ended" notice. |
+| `components/AlertSection.tsx` | Composes hook + board + modal + the administrator's Start/End buttons (shown only with `start-alerts` / `end-alerts`). The hook lives here, not in the modal, so the subscription stays open while the modal is closed. |
+| `pages/HomePage.tsx` | Renders `AlertSection` above the chat, so chat stays usable during an alert. |
+
+**Manual test with two sessions** (stack running, demo data seeded):
+
+1. Open <http://localhost:5173> in a normal window and sign in as `admin@example.com` / `password`. Open a private
+   window (separate cookies) and sign in as `user@example.com` / `password`.
+2. In the administrator window press **Start alert**. Both windows open the modal with Square A to D by themselves.
+3. In the user window click **Square B**: the modal closes and "Demo User (you)" appears in Square B. In the administrator
+   window the name "Demo User" appears in Square B without reloading.
+4. In the administrator window click **Square B** too: both names are in Square B in both windows (squares can be shared).
+5. Send a chat message from each window while the alert is active: chat still works.
+6. Refresh the user window: no modal (already picked) and the board still shows both names.
+7. Direct requests: while the alert is active there is no Start button. In the browser console of a signed-in window
+   (it carries the session cookie; the CSRF token is read from the cookie) run the snippet below. In the user window it
+   answers **403** (no `start-alerts`); in the administrator window it answers **409** (an alert is already active).
+   ```js
+   const t = decodeURIComponent(document.cookie.split('; ').find((c) => c.startsWith('XSRF-TOKEN=')).split('=')[1])
+   fetch('/api/alerts', { method: 'POST', credentials: 'include', headers: { Accept: 'application/json', 'X-XSRF-TOKEN': t } }).then((r) => r.status)
+   ```
+8. Press **End alert**: both windows show "This alert has ended" and further picks are refused (`POST .../responses`
+   answers 409).
+9. Reconnection: press **Start alert** for a new alert, then stop Reverb (`docker compose stop reverb`) and end the alert in
+   the administrator window (this works, it is plain HTTP, and answered in about 0.1 s even with Reverb down). The user window still
+   shows it as active. Start Reverb again (`docker compose start reverb`): the user window reconnects and shows the ended alert by itself
+   within a second or two (measured with a scripted two-browser run).
+10. Press **Start alert** again: the board is empty and everyone can pick again.
+
+## 7. Tests
 
 
-* **Backend (99 tests, 337 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
+* **Backend (141 tests, 469 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
   throttling, logout and 401, password reset (link target, unknown email, throttle, expired, reused or invalid token,
   weak password), gates for both roles, 401/403/200 enforcement, mass-assignment, profile validation per field,
   other-user and administrator 403, uploads (valid, replaced, removed, wrong type, wrong format, too large, too
-  small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403).
-* **Frontend (52 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
+  small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403); alerts: start (administrator 201 and empty, regular user 403 and nothing created, visitor 401, second active alert 409, a new alert after the end starts empty), current (none, active with responses, ended while offline, latest only, no private fields, 401), pick (valid, administrator too, shared square, second pick 409 and first kept, again in a new alert, invalid/missing/wrong-case/array square 422, ended alert 409, unknown alert 404, forged person ignored, 403 without the ability, 401), end (responses kept, twice 409, 403 for a user, 401, 404, pick after the end refused), the database constraints hit with raw inserts (second active alert, duplicate response, square outside a to d, cascades, mass assignment), broadcast (channel/name/snapshot, revision, nothing on any rejected request, broadcaster down still succeeds) and the `alerts` channel (permitted user, missing ability 403, visitor 401). Two requests truly racing are covered by the database constraints rather than by a concurrent test.
+* **Frontend (89 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
   route guards, login/forgot/reset pages, profile page, people page, home page (including the exact 1 px white text), Echo options
   (own origin, fresh CSRF header), and the chat panel with a fake real-time layer (history, live message, no duplicates, send
   by button/Enter/Shift+Enter, blank, server error keeps text, no ability, older messages, offline notice, catch-up after
-  reconnect, retry, HTML shown as text, unsubscribe on unmount).
+  reconnect, retry, HTML shown as text, unsubscribe on unmount); alerts: `applySnapshot` (newer id, higher revision, stale ignored, idempotent), `useAlert` with a fake Echo (live start, stale ignored, an empty first load does not erase a live alert, catch-up of an alert that ended while offline, actions, errors, retry), `AlertModal` (four labeled squares, pick, cannot be dismissed, server error keeps it open, closed after picking / ended / without ability), `AlertBoard` (names in squares, shared squares, ended notice) and `AlertSection` (modal opens live, name appears after picking, reload restores, ending closes the modal, controls per role, nothing for users who may not receive alerts).
 * Run them: `docker compose exec backend php artisan test` and `docker compose exec frontend npm test`.
 
-## 7. Trade-offs to mention
+## 8. Trade-offs to mention
 
 * Same-origin proxy and cookie sessions need a single-origin deployment in production (or Sanctum domain config).
 * Demo credentials are public by design; the seeder is for local use.
@@ -157,3 +241,7 @@ protocol (so `pusher-js` and Echo work unchanged) and authorises private channel
   with Redis if ever needed.
 * Messages are plain text, never edited or deleted, and not moderated: out of scope.
 * The hidden 1 px white text is required by the brief; it is invisible and carries no interaction.
+* Alerts: the first pick is final (the brief says one response per user per alert); changing a pick would be an upsert, but that is a different rule.
+* Reading alert state needs both `receive-alerts` and `view-locations` because one broadcast payload goes to everyone and it names who is where.
+* The `alerts_single_active` index is a Postgres-specific partial expression index; the project is Postgres-only, and the database is the one place that cannot be raced.
+* An ended alert stays on the board as "ended" until a new alert starts; hiding old alerts is a UI refinement, not a data problem.

@@ -12,3 +12,9 @@ use Illuminate\Support\Facades\Broadcast;
 | Returning true (not a user array) makes this a plain private channel.
 */
 Broadcast::channel('chat', fn (User $user): bool => true);
+
+/*
+| `alerts` carries who-is-where, so joining needs the same two abilities as
+| GET /api/alerts/current. A visitor never reaches this callback (auth:sanctum).
+*/
+Broadcast::channel('alerts', fn (User $user): bool => $user->can('receive-alerts') && $user->can('view-locations'));

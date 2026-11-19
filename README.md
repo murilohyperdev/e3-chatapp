@@ -107,6 +107,30 @@ docker compose exec backend php artisan migrate
 
 The main page also carries a 1 px white text element required by the exercise brief.
 
+## Alerts and locations
+
+An administrator starts an alert; every open session gets a modal asking where the person is, with four labeled
+squares (A to D) in a 2x2 grid. Each person picks one square (the first pick is final), and every session shows the
+names inside the squares live. Several people can share a square. Chat keeps working. An administrator can end the
+alert: further picks are refused. The state is stored in PostgreSQL, so a refresh or reconnect restores it (including an
+alert that ended while the session was offline), and each new alert starts with no responses.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/alerts/current` | Latest alert (active or ended) with its responses, or `{"data": null}`. Needs `receive-alerts` and `view-locations` |
+| `POST /api/alerts` | Start an alert. Needs `start-alerts`. 409 if one is already active |
+| `POST /api/alerts/{alert}/responses` | Body `{"square": "a"}` (`a` to `d`). Needs `submit-locations`. 409 if the alert ended or you already picked, 422 for an invalid square |
+| `POST /api/alerts/{alert}/end` | End the alert. Needs `end-alerts`. 409 if already ended |
+
+Live event: private channel `alerts` (needs `receive-alerts` and `view-locations`), event `alert.changed`, payload is the whole
+alert, identical to the HTTP responses: `{id, status: "active"|"ended", revision, started_at, ended_at, started_by,
+responses: [{user: {id, name, avatar_url}, square}]}`. Clients keep the snapshot with the highest `revision`.
+
+The database enforces the rules: a partial unique index allows one active alert, `UNIQUE (alert_id, user_id)` allows one
+response per person per alert, and a CHECK limits the square to `a` to `d`.
+
+**Existing checkout?** Run `docker compose exec backend php artisan migrate` to create the alert tables.
+
 ## Authentication
 
 Session-based SPA authentication with Laravel Sanctum: the browser keeps an `HttpOnly` session cookie and sends a
