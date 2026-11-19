@@ -2,7 +2,12 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import type { User } from '../api/auth'
 import { AuthContext } from '../auth/AuthContext'
-import HomePage from './HomePage'
+import HomePage, { HIDDEN_TEXT } from './HomePage'
+
+// The chat has its own tests; here it is replaced by a stub.
+vi.mock('../components/ChatPanel', () => ({
+  ChatPanel: ({ canSend }: { canSend: boolean }) => <div data-testid="chat" data-can-send={canSend} />,
+}))
 
 const baseAbilities = {
   'send-messages': true,
@@ -43,5 +48,23 @@ describe('HomePage', () => {
 
     expect(screen.getByText('Administrator')).toBeInTheDocument()
     expect(screen.getByText(/start and end alerts/i)).toBeInTheDocument()
+  })
+
+  it('shows the chat and tells it whether the user may send', () => {
+    renderHome({ id: 1, name: 'Jane', email: 'j@example.com', role: 'user', phone: null, address: null, avatar_url: null, abilities: baseAbilities })
+    expect(screen.getByTestId('chat')).toHaveAttribute('data-can-send', 'true')
+  })
+
+  it('contains the required text, exactly, in a 1px white element', () => {
+    renderHome({ id: 1, name: 'Jane', email: 'j@example.com', role: 'user', phone: null, address: null, avatar_url: null, abilities: baseAbilities })
+
+    expect(HIDDEN_TEXT).toBe(
+      'The dark side consumes you. Have you ever heard of the tragedy of Darth Plagueis the wise?',
+    )
+    const element = screen.getByText(HIDDEN_TEXT)
+    expect(element).toBeInTheDocument()
+    const style = getComputedStyle(element)
+    expect(style.fontSize).toBe('1px')
+    expect(style.color).toBe('rgb(255, 255, 255)')
   })
 })

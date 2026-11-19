@@ -1,4 +1,4 @@
-# Explicação do código (itens 1 a 3)
+# Explicação do código (itens 1 a 4)
 
 Notas para a entrevista: o que cada parte faz e por que foi feita assim. Versão em inglês: [WALKTHROUGH.md](WALKTHROUGH.md).
 
@@ -6,20 +6,23 @@ Notas para a entrevista: o que cada parte faz e por que foi feita assim. Versão
 
 ```
 Navegador (React, :5173)
-   |  requisições de mesma origem: /api, /sanctum, /storage
+   |  requisições de mesma origem: /api, /sanctum, /storage, /app
    v
 Servidor Vite (proxy)  ---->  API Laravel (:8000)  ---->  PostgreSQL
-                                   |
-                                   +--> Mailpit (SMTP :1025, caixa de entrada :8025)
+   |                                |    |
+   |                                |    +--> Mailpit (SMTP :1025, caixa de entrada :8025)
+   |  upgrade WebSocket: /app       |
+   v                                | publica novas mensagens (HTTP)
+Servidor WebSocket Reverb (:8080) <-+
 ```
 
-* **Uma só origem.** O navegador só fala com o Vite, que repassa `/api`, `/sanctum` e `/storage` ao Laravel. Os cookies
+* **Uma só origem.** O navegador só fala com o Vite, que repassa `/api`, `/sanctum` e `/storage` ao Laravel e o caminho de WebSocket `/app` ao Reverb. Os cookies
   são de primeira parte, não há CORS, e o mesmo formato funciona atrás de um único proxy reverso em produção.
 * **Sessões, não tokens.** O modo SPA do Laravel Sanctum guarda o login em um cookie de sessão `HttpOnly` que o
   JavaScript não consegue ler; assim, uma falha de XSS não rouba token. Revogar é só encerrar a sessão.
 * **Fluxo orientado a especificação.** Cada item passou pelo OpenSpec: explore, propose (proposta, specs, design,
   tarefas), apply e archive. As specs de cada capacidade ficam em `openspec/specs/` (`user-auth`, `password-recovery`,
-  `user-roles`, `user-profiles`, `user-directory`) e o histórico em `openspec/changes/archive/`.
+  `user-roles`, `user-profiles`, `user-directory`, `chat-messages`, `chat-realtime`, `chat-page`) e o histórico em `openspec/changes/archive/`.
 
 ## 2. Item 1: autenticação
 
@@ -90,23 +93,76 @@ já resolvidos; tokens feitos à mão são fonte clássica de vulnerabilidades.
   sem `Content-Type` manual para o navegador definir o boundary do multipart. O envio da foto é POST porque o PHP não
   interpreta corpo multipart em PATCH.
 
-## 5. Testes
+## 5. Item 4: a sala de chat
 
-* **Backend (70 testes, 245 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
+**Caminho de uma mensagem.** O navegador faz `POST /api/messages` (cookie de sessão + CSRF) -> gate `can:send-messages` ->
+`StoreMessageRequest` valida -> a mensagem é salva com o usuário logado como remetente -> `NewMessage` é transmitida no
+canal privado `chat` para o Reverb -> o Reverb envia pelos WebSockets abertos de todas as outras abas -> o `useChat`
+junta a mensagem à lista. Quem enviou recebe o mesmo JSON na resposta HTTP, então vê a mensagem na hora e uma única vez.
+
+**Por que Reverb + Echo (decidido no explore).** Polling é simples, mas atrasa e desperdiça requisições, então não é
+tempo real de verdade. Server-Sent Events manteriam uma conexão aberta por usuário e o `php artisan serve` atende uma
+requisição por vez, então a API travaria (e o Laravel não tem autorização de canal para SSE nativa). Pusher e Ably exigem
+conta externa. Um sidecar Node com socket.io traz uma segunda linguagem e um segundo sistema de autenticação. O Reverb é
+oficial, roda em casa, fala o protocolo Pusher (então `pusher-js` e Echo funcionam sem adaptação) e autoriza canais
+privados com a sessão que já existe. O item 5 (alertas) vai publicar na mesma conexão, e o chat continua funcionando
+durante um alerta porque são canais separados.
+
+**Backend**
+
+| Arquivo | O quê e por quê |
+|---------|-----------------|
+| `database/migrations/..._create_messages_table.php` | `user_id` (chave estrangeira, cascade, indexada) + `body` (texto) + timestamps. O histórico é paginado por `id`, então não precisa de outro índice. |
+| `Models/Message.php` | Só `body` está em `#[Fillable]`; o remetente é definido por `$user->messages()->create(...)`, então uma requisição nunca forja o `user_id` (um teste garante). |
+| `Http/Requests/StoreMessageRequest.php` | `required|string|max:2000`. O middleware `TrimStrings` do Laravel apara o texto e transforma texto em branco em `null`, então só espaços falha em `required`. |
+| `Http/Controllers/MessageController.php` | `index`: paginação por cursor (`id < before`, mais novas primeiro, `limit 51` para saber `has_more` sem consulta de contagem, depois invertida para ordem cronológica). Paginação por página deslocaria e duplicaria linhas enquanto chegam mensagens novas. `store`: salva e depois transmite com `toOthers()` dentro de try/catch, então uma queda do Reverb nunca perde uma mensagem já salva. |
+| `Http/Resources/MessageResource.php` | Um só formato para as respostas HTTP **e** para o broadcast. O remetente expõe só id, nome e foto. |
+| `Events/NewMessage.php` | `ShouldBroadcastNow` em `PrivateChannel('chat')`, nome `message.created`. "Now" em vez de fila: não precisa de worker de fila, é uma chamada HTTP ao Reverb. Contrapartida: o POST espera essa chamada (aceitável aqui, e falhas são engolidas e reportadas). |
+| `routes/channels.php` | `Broadcast::channel('chat', ...)`: qualquer usuário logado pode ouvir. Escrever é protegido pelo gate da rota. |
+| `bootstrap/app.php` | `withBroadcasting(..., ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum']])` expõe `POST /api/broadcasting/auth` sob `/api`, então passa pelo proxy existente e usa o cookie de sessão. |
+| `routes/api.php` | `GET /messages` e `POST /messages` com `can:send-messages` + `throttle:30,1` (anti-flood). |
+| `docker-compose.yml` | Novo serviço `reverb`: mesma imagem, roda `php artisan reverb:start`. A API ganhou healthcheck e o `reverb` espera por ela, para dois contêineres não rodarem `composer install` juntos num clone novo. |
+
+**Frontend**
+
+| Arquivo | O quê e por quê |
+|---------|-----------------|
+| `lib/echo.ts` | O único arquivo que conhece WebSockets. Conecta na **origem da própria página** (o Vite repassa `/app` ao Reverb: sem CORS, sem porta extra). A autorização do canal usa um `headersProvider` que lê o cookie `XSRF-TOKEN` a cada tentativa, então um token rotacionado nunca fica velho. Expõe `subscribeToChat({onMessage, onStatus})`. `disconnectEcho()` roda ao sair. |
+| `api/client.ts` | Envia `X-Socket-ID` (o Echo só o adiciona sozinho para axios, não para `fetch`), o que permite ao `toOthers()` do servidor pular a aba de quem enviou. |
+| `chat/useChat.ts` | Dono do estado: histórico, mensagens ao vivo, envio, carregar antigas, status da conexão. As mensagens são **unidas por id** e ordenadas, então uma que chega ao vivo e pelo histórico (ou duas vezes) aparece uma vez só; isso faz do `toOthers()` uma otimização, não uma necessidade de correção. Depois de reconectar, busca de novo a página mais recente, cobrindo tudo que passou enquanto estava offline. |
+| `components/ChatPanel.tsx` | Apresentação: lista (minhas mensagens à direita e coloridas), aviso de offline, campo de envio. Enter envia, Shift+Enter quebra linha, Enter durante composição (IME) não envia. Fica no fim da lista para mensagens novas e mantém a posição quando antigas são inseridas acima. Um envio com erro mostra a mensagem do servidor e **mantém o texto**. O texto é renderizado pelo React como texto, então HTML guardado nunca é executado. |
+| `pages/HomePage.tsx` | Mostra o chat (campo desabilitado sem `send-messages`) e o texto branco de 1 px exigido pelo enunciado, como texto real da página (não `display: none`). |
+
+## 6. Testes
+
+
+* **Backend (99 testes, 337 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
   limite de tentativas, logout e 401, redefinição de senha (destino do link, e-mail desconhecido, limite, token
   expirado, reutilizado ou inválido, senha fraca), gates para os dois papéis, imposição de 401/403/200, atribuição em
   massa, validação de cada campo do perfil, 403 para outro usuário e para administrador, uploads (válido, substituído,
   removido, tipo errado, formato errado, grande demais, pequeno demais, pixels demais, ausente), ordenação e paginação
-  do diretório e ausência de campos privados.
-* **Frontend (29 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
-  401, multipart), guards de rota, páginas de login/esqueci a senha/redefinir, página de perfil, de pessoas e inicial.
+  do diretório e ausência de campos privados; chat: envio (válido, aparado, exatamente 2000, 2001, vazio/em branco/ausente/array,
+  remetente forjado, 403 sem a habilidade, 401), histórico (vazio, ordem, 50 por página, `before`, `has_more`, cursor
+  inválido, sem campos privados, sem N+1, 401), broadcast (canal/nome/conteúdo certos, mesmo formato da resposta HTTP,
+  nada em caso de falha, broadcaster fora do ar continua 201 e salva) e autorização do canal (membro assinado, visitante
+  401, outros canais 403).
+* **Frontend (52 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
+  401, multipart, cabeçalho do socket), guards de rota, páginas de login/esqueci a senha/redefinir, página de perfil, de
+  pessoas e inicial (incluindo o texto exato branco de 1 px), opções do Echo (origem própria, CSRF atualizado) e o painel de
+  chat com uma camada de tempo real falsa (histórico, mensagem ao vivo, sem duplicar, envio por botão/Enter/Shift+Enter,
+  em branco, erro do servidor mantém o texto, sem habilidade, mensagens antigas, aviso offline, recuperação após
+  reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar).
 * Para rodar: `docker compose exec backend php artisan test` e `docker compose exec frontend npm test`.
 
-## 6. Trade-offs para mencionar
+## 7. Trade-offs para mencionar
 
 * Proxy de mesma origem e sessão por cookie pedem implantação com origem única em produção (ou configuração de
   domínios do Sanctum).
 * As credenciais de demonstração são públicas de propósito; o seeder é para uso local.
 * Sem redimensionamento de imagem nem CDN: fora do escopo do exercício e fácil de acrescentar atrás do endpoint da foto.
-* Sem verificação de e-mail nem cadastro: não fazem parte dos itens 1 a 3.
+* Sem verificação de e-mail nem cadastro: não fazem parte dos itens 1 a 4.
 * Os gates por habilidade valem para a aplicação toda de propósito; regras por recurso (perfis) usam uma policy.
+* O servidor WebSocket é um processo só (sem escala com Redis) e o chat é uma sala só: adequado ao escopo, e o Reverb
+  escala com Redis se um dia for preciso.
+* As mensagens são texto simples, nunca editadas nem apagadas e sem moderação: fora do escopo.
+* O texto branco de 1 px é exigido pelo enunciado; é invisível e não tem interação.

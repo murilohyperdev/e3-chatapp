@@ -3,6 +3,7 @@
 use App\Http\Controllers\Auth\AuthController;
 use App\Http\Controllers\Auth\PasswordResetController;
 use App\Http\Controllers\DirectoryController;
+use App\Http\Controllers\MessageController;
 use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
@@ -41,4 +42,9 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::patch('/users/{user}', [ProfileController::class, 'update']);
     Route::post('/users/{user}/avatar', [ProfileController::class, 'uploadAvatar']);
     Route::delete('/users/{user}/avatar', [ProfileController::class, 'deleteAvatar']);
+
+    // The shared chat room: everyone signed in reads, only `send-messages` writes.
+    Route::get('/messages', [MessageController::class, 'index']);
+    Route::post('/messages', [MessageController::class, 'store'])
+        ->middleware(['can:send-messages', 'throttle:30,1']);
 });

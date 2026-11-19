@@ -12,6 +12,12 @@ return Application::configure(basePath: dirname(__DIR__))
         commands: __DIR__.'/../routes/console.php',
         health: '/up',
     )
+    // Private channel authorisation: POST /api/broadcasting/auth, answered with the
+    // same Sanctum session cookie as the rest of the API (and so behind the /api proxy).
+    ->withBroadcasting(
+        __DIR__.'/../routes/channels.php',
+        ['prefix' => 'api', 'middleware' => ['api', 'auth:sanctum']],
+    )
     ->withMiddleware(function (Middleware $middleware): void {
         // Cookie-based SPA authentication: starts the session and checks CSRF
         // for requests coming from the stateful domains in config/sanctum.php.

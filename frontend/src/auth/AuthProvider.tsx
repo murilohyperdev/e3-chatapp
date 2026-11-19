@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { getCurrentUser, login, logout, type User } from '../api/auth'
 import { setUnauthorizedHandler } from '../api/client'
+import { disconnectEcho } from '../lib/echo'
 import { AuthContext, type AuthContextValue, type AuthStatus } from './AuthContext'
 
 // Single source of truth for "who is signed in". The server owns the session;
@@ -27,6 +28,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     // Any later 401 means the session expired: drop the user, guards redirect to /login.
     setUnauthorizedHandler(() => {
+      disconnectEcho()
       setUser(null)
       setStatus('unauthenticated')
     })
@@ -45,6 +47,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     await logout()
+    // Close the WebSocket so the next person on this browser starts clean.
+    disconnectEcho()
     setUser(null)
     setStatus('unauthenticated')
   }, [])

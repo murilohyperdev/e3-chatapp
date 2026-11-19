@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError, setUnauthorizedHandler } from './client'
+import { api, ApiError, setSocketIdProvider, setUnauthorizedHandler } from './client'
 
 const fetchMock = vi.fn()
 
@@ -15,6 +15,7 @@ beforeEach(() => {
 afterEach(() => {
   fetchMock.mockReset()
   setUnauthorizedHandler(null)
+  setSocketIdProvider(null)
   vi.unstubAllGlobals()
 })
 
@@ -102,5 +103,23 @@ describe('api client', () => {
 
     await expect(api('/user')).rejects.toBeInstanceOf(ApiError)
     expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it('sends the WebSocket id so the server can skip this tab when broadcasting', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {}))
+    setSocketIdProvider(() => '123.456')
+
+    await api('/messages')
+
+    expect(fetchMock.mock.calls[0][1].headers['X-Socket-ID']).toBe('123.456')
+  })
+
+  it('omits the socket header while there is no connection', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse(200, {}))
+    setSocketIdProvider(() => undefined)
+
+    await api('/messages')
+
+    expect(fetchMock.mock.calls[0][1].headers).not.toHaveProperty('X-Socket-ID')
   })
 })

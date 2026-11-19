@@ -3,7 +3,7 @@
 Real-time chat application built for the EMERGENT3 Senior Software Engineer technical exercise
 (authentication, user roles, profiles, shared chat room, alerts with a 2×2 location map).
 
-> **Status:** authentication, user types and profiles are done. Features are added one at a time.
+> **Status:** authentication, user types, profiles and the real-time chat room are done. Features are added one at a time.
 
 ## Technology choices
 
@@ -12,6 +12,7 @@ Real-time chat application built for the EMERGENT3 Senior Software Engineer tech
 | Backend   | PHP 8.4, Laravel 13 (JSON API)           | Required by the exercise. |
 | Frontend  | React 19 + TypeScript + Material UI, Vite | Typed UI, ready-made accessible components, fast dev server. |
 | Database  | PostgreSQL 17                            | Robust constraints (e.g. one location per user per alert) and a closer match to production than SQLite. |
+| Real time | Laravel Reverb (WebSockets) + Laravel Echo | First-party, self-hosted, authorises private channels with the same session as the API. Alerts will reuse it. |
 | Email     | Mailpit (local SMTP inbox)               | Password-reset emails are readable in a browser; the exercise accepts a local inbox. |
 | Runtime   | Docker Compose                           | One command to start everything, same versions for everyone. |
 
@@ -45,6 +46,7 @@ The first start installs Composer and npm dependencies and generates `APP_KEY`, 
 | App (React)    | http://localhost:5173 |
 | API (Laravel)  | http://localhost:8000/api/health |
 | Mailpit inbox  | http://localhost:8025 |
+| Reverb (WebSockets) | `ws://localhost:5173/app` (proxied by Vite to the `reverb` service on 8080) |
 | PostgreSQL     | `localhost:5433` (user/db `e3chat`, password in `docker-compose.yml`) |
 
 Ports can be changed through a root `.env` (see `.env.example`). PostgreSQL uses 5433 on the host to
@@ -75,6 +77,28 @@ The role is not mass assignable, so it cannot be changed through request input. 
 Email and user type cannot be changed through these endpoints (extra fields are ignored). Pictures are stored on the
 `public` disk (`storage/app/public/avatars`, served from `/storage` through the `storage:link` the container creates
 on start); replacing or removing a picture deletes the old file. The directory never includes email, phone or address.
+
+## Chat room
+
+One shared room on the main page. Messages are stored in PostgreSQL and pushed to every other open session over a
+WebSocket (Laravel Reverb), so nobody has to refresh. The page also shows whether live updates are connected and, after a
+dropped connection comes back, fetches what it missed.
+
+| Endpoint | Purpose |
+|----------|---------|
+| `GET /api/messages?before={id}` | Latest 50 messages (oldest first), or the 50 before message `id`. Returns `meta.has_more` |
+| `POST /api/messages` | Body `{"body": "text"}`, 1 to 2000 characters, trimmed. Needs the `send-messages` ability (403 otherwise), 30 per minute |
+| `POST /api/broadcasting/auth` | Used by Echo to authorise the private `chat` channel with the session cookie (401 for visitors) |
+
+Live event: private channel `chat`, event `message.created`, payload identical to a message in the HTTP responses:
+`{id, body, created_at, user: {id, name, avatar_url}}`. The sender is always the signed-in user (a `user_id` in the request is
+ignored) and senders never expose email, phone or address.
+
+**Existing checkout?** `backend/.env` is only created on a fresh clone, so copy the new `BROADCAST_CONNECTION` and
+`REVERB_*` lines from `backend/.env.example` into it, then run `docker compose up -d --build` and
+`docker compose exec backend php artisan migrate`.
+
+The main page also carries a 1 px white text element required by the exercise brief.
 
 ## Authentication
 
@@ -107,7 +131,7 @@ docker compose exec frontend npm run lint
 backend/    Laravel API
 frontend/   React + TypeScript + MUI (Vite)
 docker/     Dockerfile and init scripts for the containers
-docker-compose.yml
+docker-compose.yml   (backend, reverb, frontend, postgres, mailpit)
 openspec/   Spec-driven change workflow
 ```
 
