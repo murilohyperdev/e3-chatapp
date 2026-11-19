@@ -28,4 +28,4 @@
 
 ## Workflow follow-up
 
-- [ ] Archive the change with `/opsx:archive` after the work is merged-ready.
+- [x] Archive the change with `/opsx:archive` after the work is merged-ready.
