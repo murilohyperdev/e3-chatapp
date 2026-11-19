@@ -1,5 +1,9 @@
 <?php
 
+use App\Http\Controllers\Auth\AuthController;
+use App\Http\Controllers\Auth\PasswordResetController;
+use App\Http\Controllers\DirectoryController;
+use App\Http\Controllers\ProfileController;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
@@ -21,4 +25,20 @@ Route::get('/health', function () {
         'database' => DB::connection()->getDriverName(),
         'time' => now()->toIso8601String(),
     ]);
+});
+
+// Public: sign in and password recovery.
+Route::post('/login', [AuthController::class, 'login']);
+Route::post('/forgot-password', [PasswordResetController::class, 'forgot']);
+Route::post('/reset-password', [PasswordResetController::class, 'reset']);
+
+// Everything below requires a signed-in user (session cookie via Sanctum).
+Route::middleware('auth:sanctum')->group(function () {
+    Route::post('/logout', [AuthController::class, 'logout']);
+    Route::get('/user', [AuthController::class, 'me']);
+
+    Route::get('/users', [DirectoryController::class, 'index']);
+    Route::patch('/users/{user}', [ProfileController::class, 'update']);
+    Route::post('/users/{user}/avatar', [ProfileController::class, 'uploadAvatar']);
+    Route::delete('/users/{user}/avatar', [ProfileController::class, 'deleteAvatar']);
 });
