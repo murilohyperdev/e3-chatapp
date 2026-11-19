@@ -1,6 +1,6 @@
 # Codebase walkthrough (items 1 to 3)
 
-Interview notes: what each part does and why it was built that way.
+Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
 ## 1. How the pieces fit
 
