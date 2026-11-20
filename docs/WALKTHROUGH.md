@@ -1,4 +1,4 @@
-# Codebase walkthrough (items 1 to 5)
+# Codebase walkthrough (items 1 to 6)
 
 Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
@@ -215,22 +215,55 @@ where and a broadcast cannot be filtered per user. Tests call the endpoints dire
    within a second or two (measured with a scripted two-browser run).
 10. Press **Start alert** again: the board is empty and everyone can pick again.
 
-## 7. Tests
+## 7. Item 6: ending and recovery
+
+**What the brief asks.** An administrator ends the alert, both sessions update, further submissions are rejected, and a
+refresh, reopen or reconnect restores the true state, including an alert that ended while a session was disconnected. A new
+alert starts with no responses.
+
+**Most of it already existed after item 5, by design.** Ending, the 409 on late picks and the "latest alert, active or ended"
+snapshot came with the alerts change, because the snapshot model makes recovery one `GET /api/alerts/current`. So item 6 was
+an audit first (OpenSpec change `harden-alert-closure`), and it found three real gaps instead of re-implementing what works.
+
+| Gap found | Fix and why |
+|-----------|-------------|
+| A client with stale state (socket dropped, the end was missed) that tried to pick got a 409, showed an error, and the modal stayed open. | `useAlert` now treats a **409 on pick, end or start** as "the server moved on without me": it refetches `/alerts/current`, applies it, and still rethrows so the error message appears. The modal then closes because the alert is `ended`. 409 is the right trigger because it is exactly the status the server uses for "state conflict". |
+| Catch-up only ran after a WebSocket reconnect. A sleeping laptop or a background phone tab can hold a socket that looks connected but missed events. | The same `resync()` also runs on `visibilitychange` (only when the tab becomes visible) and on the browser's `online` event. One function, four triggers (reconnect, 409, visible, online), listeners removed on unmount, a failed resync keeps what is shown. No polling timer. |
+| Nothing proved the whole lifecycle end to end. | `AlertLifecycleJourneyTest`: start, pick, end, a "late" user restores the ended alert with its responses, the late pick is refused and stores nothing, the next alert starts with zero responses and the old one is untouched. `AlertResourceTest` pins that an ended snapshot keeps its responses and end time. |
+
+**Why the order of events is safe.** The pick and the end both lock the alert row (`SELECT ... FOR UPDATE`, item 5): a pick
+either commits before the end or waits, sees `ended_at` and gets 409. Because every message is a full snapshot guarded by
+`revision`, a resync response racing a live event can never move the screen backwards (`applySnapshot`).
+
+**No new endpoint, no migration, no production PHP.** The behaviour was already correct on the server; the risk was in the
+client and in missing tests. That is the honest, smallest change.
+
+**Manual test (two sessions, administrator and user).**
+
+1. Start an alert, let the user pick, end it from the administrator window: both windows show "This alert has ended".
+2. Stale modal: start a new alert, stop Reverb (`docker compose stop reverb`), end the alert as the administrator. In the user
+   window (still showing the modal) click a square: the server answers 409 and the modal closes by itself, showing the ended
+   board. Start Reverb again.
+3. Missed end while hidden: start another alert, hide the user tab, end the alert, show the tab again: it shows the ended state
+   without a reload.
+4. Reload any window after the end: the ended alert and its names are still shown. Press **Start alert**: the board is empty.
+
+## 8. Tests
 
 
-* **Backend (141 tests, 469 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
+* **Backend (144 tests, 497 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
   throttling, logout and 401, password reset (link target, unknown email, throttle, expired, reused or invalid token,
   weak password), gates for both roles, 401/403/200 enforcement, mass-assignment, profile validation per field,
   other-user and administrator 403, uploads (valid, replaced, removed, wrong type, wrong format, too large, too
-  small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403); alerts: start (administrator 201 and empty, regular user 403 and nothing created, visitor 401, second active alert 409, a new alert after the end starts empty), current (none, active with responses, ended while offline, latest only, no private fields, 401), pick (valid, administrator too, shared square, second pick 409 and first kept, again in a new alert, invalid/missing/wrong-case/array square 422, ended alert 409, unknown alert 404, forged person ignored, 403 without the ability, 401), end (responses kept, twice 409, 403 for a user, 401, 404, pick after the end refused), the database constraints hit with raw inserts (second active alert, duplicate response, square outside a to d, cascades, mass assignment), broadcast (channel/name/snapshot, revision, nothing on any rejected request, broadcaster down still succeeds) and the `alerts` channel (permitted user, missing ability 403, visitor 401). Two requests truly racing are covered by the database constraints rather than by a concurrent test.
-* **Frontend (89 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
+  small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403); alerts: start (administrator 201 and empty, regular user 403 and nothing created, visitor 401, second active alert 409, a new alert after the end starts empty), current (none, active with responses, ended while offline, latest only, no private fields, 401), pick (valid, administrator too, shared square, second pick 409 and first kept, again in a new alert, invalid/missing/wrong-case/array square 422, ended alert 409, unknown alert 404, forged person ignored, 403 without the ability, 401), end (responses kept, twice 409, 403 for a user, 401, 404, pick after the end refused), the database constraints hit with raw inserts (second active alert, duplicate response, square outside a to d, cascades, mass assignment), broadcast (channel/name/snapshot, revision, nothing on any rejected request, broadcaster down still succeeds) and the `alerts` channel (permitted user, missing ability 403, visitor 401). Item 6 adds a full-lifecycle journey test (start, pick, end, restore, late pick refused, next alert empty) and a unit test of the ended snapshot. Two requests truly racing are covered by the database constraints rather than by a concurrent test.
+* **Frontend (98 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
   route guards, login/forgot/reset pages, profile page, people page, home page (including the exact 1 px white text), Echo options
   (own origin, fresh CSRF header), and the chat panel with a fake real-time layer (history, live message, no duplicates, send
   by button/Enter/Shift+Enter, blank, server error keeps text, no ability, older messages, offline notice, catch-up after
-  reconnect, retry, HTML shown as text, unsubscribe on unmount); alerts: `applySnapshot` (newer id, higher revision, stale ignored, idempotent), `useAlert` with a fake Echo (live start, stale ignored, an empty first load does not erase a live alert, catch-up of an alert that ended while offline, actions, errors, retry), `AlertModal` (four labeled squares, pick, cannot be dismissed, server error keeps it open, closed after picking / ended / without ability), `AlertBoard` (names in squares, shared squares, ended notice) and `AlertSection` (modal opens live, name appears after picking, reload restores, ending closes the modal, controls per role, nothing for users who may not receive alerts).
+  reconnect, retry, HTML shown as text, unsubscribe on unmount); alerts: `applySnapshot` (newer id, higher revision, stale ignored, idempotent), `useAlert` with a fake Echo (resync on a 409 for pick and end, on tab visible and on online, silent on failure, listeners removed; live start, stale ignored, an empty first load does not erase a live alert, catch-up of an alert that ended while offline, actions, errors, retry), `AlertModal` (four labeled squares, pick, cannot be dismissed, server error keeps it open, closed after picking / ended / without ability), `AlertBoard` (names in squares, shared squares, ended notice) and `AlertSection` (modal opens live, name appears after picking, reload restores, ending closes the modal, controls per role, nothing for users who may not receive alerts).
 * Run them: `docker compose exec backend php artisan test` and `docker compose exec frontend npm test`.
 
-## 8. Trade-offs to mention
+## 9. Trade-offs to mention
 
 * Same-origin proxy and cookie sessions need a single-origin deployment in production (or Sanctum domain config).
 * Demo credentials are public by design; the seeder is for local use.
@@ -245,3 +278,4 @@ where and a broadcast cannot be filtered per user. Tests call the endpoints dire
 * Reading alert state needs both `receive-alerts` and `view-locations` because one broadcast payload goes to everyone and it names who is where.
 * The `alerts_single_active` index is a Postgres-specific partial expression index; the project is Postgres-only, and the database is the one place that cannot be raced.
 * An ended alert stays on the board as "ended" until a new alert starts; hiding old alerts is a UI refinement, not a data problem.
+* Resync runs on events (reconnect, 409, tab visible, online), not on a timer: no constant polling, and the revision guard makes any extra fetch harmless.

@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as alertsApi from '../api/alerts'
 import type { AlertSnapshot } from '../api/alerts'
+import { ApiError } from '../api/client'
 import * as echo from '../lib/echo'
 import { useAlert } from './useAlert'
 
@@ -113,6 +114,95 @@ describe('useAlert', () => {
 
     await waitFor(() => expect(result.current.alert?.revision).toBe(1))
     expect(result.current.loadFailed).toBe(false)
+  })
+
+  describe('resync when the state may be stale', () => {
+    const conflict = () => new ApiError(409, 'This alert has ended.')
+
+    async function mountWithActiveAlert() {
+      vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot(1))
+      const hook = renderHook(() => useAlert())
+      await waitFor(() => expect(hook.result.current.alert?.status).toBe('active'))
+      return hook
+    }
+
+    it('a 409 on pick fetches the current alert and still rejects', async () => {
+      const { result } = await mountWithActiveAlert()
+      vi.mocked(alertsApi.pickSquare).mockRejectedValue(conflict())
+      vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot(3, 'ended'))
+
+      await act(async () => {
+        await expect(result.current.pick(1, 'a')).rejects.toBeInstanceOf(ApiError)
+      })
+
+      await waitFor(() => expect(result.current.alert?.status).toBe('ended'))
+    })
+
+    it('a 409 on end fetches the current alert', async () => {
+      const { result } = await mountWithActiveAlert()
+      vi.mocked(alertsApi.endAlert).mockRejectedValue(conflict())
+      vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot(3, 'ended'))
+
+      await act(async () => {
+        await expect(result.current.end(1)).rejects.toBeInstanceOf(ApiError)
+      })
+
+      await waitFor(() => expect(result.current.alert?.status).toBe('ended'))
+    })
+
+    it('other errors do not trigger a fetch', async () => {
+      const { result } = await mountWithActiveAlert()
+      vi.mocked(alertsApi.pickSquare).mockRejectedValue(new ApiError(500, 'boom'))
+
+      await act(async () => {
+        await expect(result.current.pick(1, 'a')).rejects.toBeInstanceOf(ApiError)
+      })
+
+      expect(alertsApi.getCurrentAlert).toHaveBeenCalledTimes(1)
+    })
+
+    it('fetches when the tab becomes visible, not when it is hidden', async () => {
+      const { result } = await mountWithActiveAlert()
+      const visibility = vi.spyOn(document, 'visibilityState', 'get')
+      vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot(4, 'ended'))
+
+      visibility.mockReturnValue('hidden')
+      act(() => void document.dispatchEvent(new Event('visibilitychange')))
+      expect(alertsApi.getCurrentAlert).toHaveBeenCalledTimes(1)
+
+      visibility.mockReturnValue('visible')
+      act(() => void document.dispatchEvent(new Event('visibilitychange')))
+      await waitFor(() => expect(result.current.alert?.status).toBe('ended'))
+      visibility.mockRestore()
+    })
+
+    it('fetches when the browser is back online', async () => {
+      const { result } = await mountWithActiveAlert()
+      vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot(4, 'ended'))
+
+      act(() => void window.dispatchEvent(new Event('online')))
+
+      await waitFor(() => expect(result.current.alert?.status).toBe('ended'))
+    })
+
+    it('keeps what is shown when a resync fails', async () => {
+      const { result } = await mountWithActiveAlert()
+      vi.mocked(alertsApi.getCurrentAlert).mockRejectedValueOnce(new Error('offline'))
+
+      act(() => void window.dispatchEvent(new Event('online')))
+
+      await waitFor(() => expect(alertsApi.getCurrentAlert).toHaveBeenCalledTimes(2))
+      expect(result.current.alert?.status).toBe('active')
+    })
+
+    it('removes its listeners on unmount', async () => {
+      const { unmount } = await mountWithActiveAlert()
+      unmount()
+
+      window.dispatchEvent(new Event('online'))
+
+      expect(alertsApi.getCurrentAlert).toHaveBeenCalledTimes(1)
+    })
   })
 
   it('stops listening on unmount', () => {
