@@ -1,4 +1,4 @@
-# Codebase walkthrough (items 1 to 7)
+# Codebase walkthrough (items 1 to 8)
 
 Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
@@ -269,7 +269,14 @@ client and in missing tests. That is the honest, smallest change.
   * Frontend: `AuthProvider` (loading, signed in, visitor, sign in ok/refused, sign out closes the WebSocket, a later 401 drops the user, handler removed on unmount), `AppLayout`, `UserAvatar`, `errors.ts`, and the forgot-password failure paths (422 under the field, generic network error).
 * **One command:** `./scripts/test.sh` (stack must be up) runs backend tests, frontend tests, lint and type-check/build. Every stage runs even if one fails, the summary lists PASS/FAIL per stage and the exit status is non-zero on any failure. It only calls `php artisan test`, never `migrate:fresh`, so it cannot wipe the development database (the testing environment is the separate `e3chat_test` database from `phpunit.xml`).
 * **Decisions to defend:** behaviour-based audit over a coverage number; real middleware in the throttle test; gate override instead of inventing a third role; the first-login-per-test rule (Laravel caches the guard, so a second login in the same test hits a different guard class: use one login per test or a data provider); no end-to-end browser tests because the live demo covers that; no CI in this change.
-* Run them: `./scripts/test.sh` (everything), or `docker compose exec backend php artisan test` and `docker compose exec frontend npm test` separately.
+* **Item 8 as code: end-to-end tests (`e2e/`, Playwright).** Unit and feature tests prove each piece; these prove the pieces work together in real browsers, which is exactly what the live demo shows. Each file opens an administrator and a user in **separate browser contexts** (own cookies, own WebSocket), so it is two independent sessions, not one session pretending.
+  * `journey.spec.ts`: chat in both directions without a refresh; only the administrator sees Start/End; starting an alert opens the location modal live for everyone who may submit a location (the administrator too, because the brief gives them every ability); each pick appears in the chosen square on both boards; ending closes locations; a new alert starts empty.
+  * `permissions.spec.ts`: a regular user gets 403 starting or ending an alert and editing another profile by calling the API directly, and the alert state is unchanged; a visitor gets 401 and is redirected to sign in.
+  * `recovery.spec.ts`: reloading before a pick restores the modal; reloading after a pick keeps the pick and does not reopen it; an alert that ended while the user's browser was offline shows as ended once it is back online; chat messages sent while offline are fetched after reconnecting.
+  * `password.spec.ts`: request a link, read the real email from Mailpit, set a new password, the link works once only, the old password is refused, the new one works, and the password is restored.
+  * Decisions: one worker (one room, one "current alert", tests are ordered journeys); runs from the host because the containers have no browser; locators by role and label, so a UI rename breaks both suites; direct API calls send the `Origin` header, because Sanctum only treats a request as a session request when it comes from the frontend origin (without it you get a misleading 401). No separate E2E database: the tests are data-safe instead (unique tagged messages, any active alert is ended first and again at the end, the changed password is restored in a `finally`, no migrate commands) and opt-in via `./scripts/test.sh --e2e`.
+  * Gotchas found while writing them: the administrator also gets the location modal, which hides the rest of the page from the accessibility tree, so the next click must be the pick; MUI labels include the required asterisk, so `getByLabel('New password', {exact: true})` never matches; and `locator.isVisible()` ignores its timeout.
+* Run them: `./scripts/test.sh` (everything; add `--e2e` for the browser tests), or `docker compose exec backend php artisan test` and `docker compose exec frontend npm test` separately.
 
 ## 9. Trade-offs to mention
 

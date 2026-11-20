@@ -167,6 +167,25 @@ docker compose exec frontend npm run lint
 docker compose exec frontend npm run build        # type-check + production build
 ```
 
+### End-to-end tests (browser)
+
+`e2e/` holds Playwright tests that drive real Chromium against the running stack, with two independent sessions
+(administrator and user): chat delivery without a refresh, alert start/pick/end delivered live, permission checks
+(UI and direct API calls), reload and offline/online recovery, and password recovery through the email in Mailpit.
+
+```bash
+cd e2e && npm ci && npx playwright install chromium   # once
+cd .. && ./scripts/test.sh --e2e                       # everything, including the browser tests
+# or only the browser tests:
+cd e2e && npx playwright test
+```
+
+They are opt-in because they need a browser and they run against the development stack: each run adds a few chat
+messages (tagged `e2e-...`), starts and ends alerts, and changes then restores the password of
+`margaret@example.com`. They never run migrations. If a run is killed in the middle of the password test, restore
+the demo password with `docker compose exec backend php artisan db:seed` (idempotent). To use an already installed
+Chromium set `E2E_CHROMIUM_PATH`; `E2E_BASE_URL` and `E2E_MAILPIT_URL` override the default addresses.
+
 Never run `migrate:fresh --env=testing`: it would wipe the development database. `php artisan test` already
 migrates the separate `e3chat_test` database for you.
 
