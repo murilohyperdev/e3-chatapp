@@ -114,4 +114,19 @@ class PostMessageTest extends TestCase
 
         $this->assertDatabaseCount('messages', 0);
     }
+
+    public function test_posting_too_fast_is_throttled_and_nothing_extra_is_stored(): void
+    {
+        $user = User::factory()->create();
+
+        // The route allows 30 posts per minute per user.
+        for ($i = 1; $i <= 30; $i++) {
+            $this->actingAs($user)->postJson('/api/messages', ['body' => "m{$i}"])->assertCreated();
+        }
+
+        $this->actingAs($user)->postJson('/api/messages', ['body' => 'one too many'])->assertTooManyRequests();
+
+        $this->assertDatabaseCount('messages', 30);
+        $this->assertDatabaseMissing('messages', ['body' => 'one too many']);
+    }
 }

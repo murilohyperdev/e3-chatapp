@@ -151,11 +151,29 @@ CSRF token (`X-XSRF-TOKEN`) on state-changing requests. Vite proxies `/api` and 
 
 ## Tests and checks
 
+With the stack running (`docker compose up -d`), one command runs everything (backend tests, frontend tests, lint,
+type-check and build), keeps going after a failure and prints a PASS/FAIL summary:
+
 ```bash
-docker compose exec backend php artisan test      # backend (uses the separate e3chat_test database)
-docker compose exec frontend npm run build        # type-check + production build
-docker compose exec frontend npm run lint
+./scripts/test.sh
 ```
+
+The stages can also be run one by one:
+
+```bash
+docker compose exec backend php artisan test      # backend: PHPUnit, separate e3chat_test database
+docker compose exec frontend npm test             # frontend: Vitest + Testing Library
+docker compose exec frontend npm run lint
+docker compose exec frontend npm run build        # type-check + production build
+```
+
+Never run `migrate:fresh --env=testing`: it would wipe the development database. `php artisan test` already
+migrates the separate `e3chat_test` database for you.
+
+What is covered, with success and failure paths: authentication and throttling, password recovery, roles and
+abilities (401/403 on direct requests), profiles and uploads, directory, chat (history, posting, rate limit,
+broadcast, channel authorisation), alerts (start, pick, end, conflicts, constraints, restore after reconnect), the
+demo seeder, and the React pages, hooks and components. See `docs/WALKTHROUGH.md`, section "Tests".
 
 ## Project layout
 
