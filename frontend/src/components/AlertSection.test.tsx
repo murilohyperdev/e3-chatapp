@@ -83,6 +83,34 @@ describe('AlertSection', () => {
     expect(screen.getByText(/has ended/)).toBeInTheDocument()
   })
 
+  it('closes the modal when a pick is refused because the alert already ended', async () => {
+    vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot())
+    vi.mocked(alertsApi.pickSquare).mockRejectedValue(new ApiError(409, 'This alert has ended: locations are closed.'))
+    render(<AlertSection user={jane} />)
+    await screen.findByRole('dialog')
+    vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot({ status: 'ended', revision: 3, ended_at: '2026-01-01T00:05:00Z' }))
+
+    await userEvent.click(screen.getByRole('button', { name: 'Square A' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(screen.getByText(/has ended/)).toBeInTheDocument()
+  })
+
+  it('shows the ended board when an administrator ends an alert somebody else already ended', async () => {
+    // Ada already picked, so her modal is closed and the buttons are reachable.
+    const both = [{ user: { id: 1, name: 'Jane', avatar_url: null }, square: 'b' as const }, { user: { id: 9, name: 'Ada', avatar_url: null }, square: 'a' as const }]
+    vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot({ responses: both }))
+    vi.mocked(alertsApi.endAlert).mockRejectedValue(new ApiError(409, 'This alert has already ended.'))
+    render(<AlertSection user={ada} />)
+    vi.mocked(alertsApi.getCurrentAlert).mockResolvedValueOnce(snapshot({ status: 'ended', revision: 3, ended_at: '2026-01-01T00:05:00Z', responses: both }))
+
+    await userEvent.click(await screen.findByRole('button', { name: 'End alert' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'End alert' })).not.toBeInTheDocument())
+    expect(screen.getByText(/has ended/)).toBeInTheDocument()
+    expect(screen.getByText('Jane')).toBeInTheDocument()
+  })
+
   it('shows the board but no modal to a user who may not submit', async () => {
     vi.mocked(alertsApi.getCurrentAlert).mockResolvedValue(snapshot())
     render(<AlertSection user={{ ...jane, abilities: { ...abilities, 'submit-locations': false } }} />)

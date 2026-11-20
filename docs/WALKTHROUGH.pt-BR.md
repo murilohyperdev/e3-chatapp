@@ -1,4 +1,4 @@
-# Explicação do código (itens 1 a 5)
+# Explicação do código (itens 1 a 6)
 
 Notas para a entrevista: o que cada parte faz e por que foi feita assim. Versão em inglês: [WALKTHROUGH.md](WALKTHROUGH.md).
 
@@ -219,10 +219,45 @@ comum e como visitante.
    reconecta e mostra o alerta encerrado sozinha em um ou dois segundos (medido com um roteiro de dois navegadores).
 10. Clique em **Start alert** de novo: o painel está vazio e todos podem escolher outra vez.
 
-## 7. Testes
+## 7. Item 6: encerramento e recuperação
+
+**O que o enunciado pede.** O administrador encerra o alerta, as duas sessões atualizam, novos envios são recusados, e
+atualizar, reabrir ou reconectar restaura o estado verdadeiro, inclusive um alerta encerrado enquanto a sessão estava
+desconectada. Um alerta novo começa sem respostas.
+
+**Quase tudo já existia depois do item 5, de propósito.** Encerrar, o 409 para escolhas tardias e o snapshot do "último
+alerta, ativo ou encerrado" vieram com a mudança de alertas, porque o modelo de snapshots faz a recuperação ser um único
+`GET /api/alerts/current`. Então o item 6 começou como uma auditoria (mudança OpenSpec `harden-alert-closure`) que achou
+três lacunas reais, em vez de reimplementar o que já funciona.
+
+| Lacuna encontrada | Correção e motivo |
+|-------------------|-------------------|
+| Um cliente com estado velho (socket caiu, perdeu o encerramento) que tentava escolher recebia 409, mostrava o erro e o modal continuava aberto. | O `useAlert` agora trata **409 em pick, end ou start** como "o servidor seguiu sem mim": busca `/alerts/current` de novo, aplica, e ainda relança o erro para a mensagem aparecer. O modal fecha porque o alerta está `ended`. 409 é o gatilho certo porque é exatamente o status que o servidor usa para "conflito de estado". |
+| O catch-up só rodava depois de reconectar o WebSocket. Um notebook que dormiu ou uma aba de celular em segundo plano pode manter um socket que parece conectado mas perdeu eventos. | A mesma `resync()` também roda em `visibilitychange` (só quando a aba fica visível) e no evento `online` do navegador. Uma função, quatro gatilhos (reconexão, 409, visível, online), listeners removidos ao desmontar, e uma falha no resync mantém o que está na tela. Sem polling por timer. |
+| Nada provava o ciclo de vida inteiro de ponta a ponta. | `AlertLifecycleJourneyTest`: inicia, escolhe, encerra, um usuário "atrasado" restaura o alerta encerrado com as respostas, a escolha tardia é recusada e não grava nada, o próximo alerta começa com zero respostas e o antigo fica intacto. `AlertResourceTest` garante que o snapshot encerrado mantém respostas e horário de término. |
+
+**Por que a ordem dos eventos é segura.** Escolher e encerrar travam a linha do alerta (`SELECT ... FOR UPDATE`, item 5): a
+escolha ou confirma antes do encerramento ou espera, vê `ended_at` e recebe 409. Como toda mensagem é um snapshot completo
+protegido por `revision`, uma resposta de resync concorrendo com um evento ao vivo nunca faz a tela voltar no tempo
+(`applySnapshot`).
+
+**Sem endpoint novo, sem migration, sem PHP de produção.** O servidor já estava correto; o risco estava no cliente e na
+falta de testes. Essa é a mudança honesta e mínima.
+
+**Teste manual (duas sessões, administrador e usuário).**
+
+1. Inicie um alerta, deixe o usuário escolher, encerre na janela do administrador: as duas janelas mostram "This alert has ended".
+2. Modal velho: inicie um novo alerta, pare o Reverb (`docker compose stop reverb`), encerre o alerta como administrador. Na
+   janela do usuário (ainda com o modal) clique em um quadrado: o servidor responde 409 e o modal fecha sozinho, mostrando o
+   painel encerrado. Suba o Reverb de novo.
+3. Encerramento perdido com a aba oculta: inicie outro alerta, oculte a aba do usuário, encerre o alerta, volte à aba: ela
+   mostra o estado encerrado sem recarregar.
+4. Recarregue qualquer janela depois do encerramento: o alerta encerrado e os nomes continuam lá. Clique em **Start alert**: o painel está vazio.
+
+## 8. Testes
 
 
-* **Backend (141 testes, 469 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
+* **Backend (144 testes, 497 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
   limite de tentativas, logout e 401, redefinição de senha (destino do link, e-mail desconhecido, limite, token
   expirado, reutilizado ou inválido, senha fraca), gates para os dois papéis, imposição de 401/403/200, atribuição em
   massa, validação de cada campo do perfil, 403 para outro usuário e para administrador, uploads (válido, substituído,
@@ -232,15 +267,15 @@ comum e como visitante.
   inválido, sem campos privados, sem N+1, 401), broadcast (canal/nome/conteúdo certos, mesmo formato da resposta HTTP,
   nada em caso de falha, broadcaster fora do ar continua 201 e salva) e autorização do canal (membro assinado, visitante
   401, outros canais 403); alertas: iniciar (administrador 201 e vazio, usuário comum 403 e nada criado, visitante 401, segundo alerta ativo 409, alerta novo depois do fim começa vazio), atual (nenhum, ativo com respostas, encerrado enquanto offline, só o último, sem campos privados, 401), escolher (válido, administrador também, quadrado compartilhado, segunda escolha 409 e a primeira mantida, de novo em outro alerta, quadrado inválido/ausente/maiúsculo/array 422, alerta encerrado 409, alerta inexistente 404, pessoa forjada ignorada, 403 sem a habilidade, 401), encerrar (respostas mantidas, duas vezes 409, 403 para usuário, 401, 404, escolha depois do fim recusada), constraints do banco acionadas com inserts diretos (segundo alerta ativo, resposta duplicada, quadrado fora de a a d, cascatas, mass assignment), broadcast (canal/nome/snapshot, revisão, nada em requisição rejeitada, broadcaster fora do ar continua funcionando) e o canal `alerts` (usuário permitido, sem habilidade 403, visitante 401). Duas requisições realmente simultâneas são cobertas pelas constraints do banco, não por um teste concorrente.
-* **Frontend (89 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
+* **Frontend (98 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
   401, multipart, cabeçalho do socket), guards de rota, páginas de login/esqueci a senha/redefinir, página de perfil, de
   pessoas e inicial (incluindo o texto exato branco de 1 px), opções do Echo (origem própria, CSRF atualizado) e o painel de
   chat com uma camada de tempo real falsa (histórico, mensagem ao vivo, sem duplicar, envio por botão/Enter/Shift+Enter,
   em branco, erro do servidor mantém o texto, sem habilidade, mensagens antigas, aviso offline, recuperação após
-  reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar); alertas: `applySnapshot` (id mais novo, revisão maior, antigo ignorado, idempotente), `useAlert` com Echo falso (início ao vivo, antigo ignorado, primeira carga vazia não apaga alerta ao vivo, recuperação de alerta encerrado offline, ações, erros, tentar de novo), `AlertModal` (quatro quadrados rotulados, escolha, não fecha com Esc, erro do servidor mantém aberto, fechado depois de escolher / encerrado / sem habilidade), `AlertBoard` (nomes nos quadrados, quadrados compartilhados, aviso de encerrado) e `AlertSection` (modal abre ao vivo, nome aparece depois de escolher, recarregar restaura, encerrar fecha o modal, controles por papel, nada para quem não pode receber alertas).
+  reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar); alertas: `applySnapshot` (id mais novo, revisão maior, antigo ignorado, idempotente), `useAlert` com Echo falso (resync em 409 de pick e end, em aba visível e em online, silencioso em falha, listeners removidos; início ao vivo, antigo ignorado, primeira carga vazia não apaga alerta ao vivo, recuperação de alerta encerrado offline, ações, erros, tentar de novo), `AlertModal` (quatro quadrados rotulados, escolha, não fecha com Esc, erro do servidor mantém aberto, fechado depois de escolher / encerrado / sem habilidade), `AlertBoard` (nomes nos quadrados, quadrados compartilhados, aviso de encerrado) e `AlertSection` (modal abre ao vivo, nome aparece depois de escolher, recarregar restaura, encerrar fecha o modal, controles por papel, nada para quem não pode receber alertas).
 * Para rodar: `docker compose exec backend php artisan test` e `docker compose exec frontend npm test`.
 
-## 8. Trade-offs para mencionar
+## 9. Trade-offs para mencionar
 
 * Proxy de mesma origem e sessão por cookie pedem implantação com origem única em produção (ou configuração de
   domínios do Sanctum).
@@ -256,3 +291,4 @@ comum e como visitante.
 * Ler o estado do alerta exige `receive-alerts` e `view-locations` porque um único payload de broadcast vai para todos e diz quem está onde.
 * O índice `alerts_single_active` é um índice parcial por expressão específico do Postgres; o projeto só usa Postgres, e o banco é o único lugar que não sofre corrida.
 * Um alerta encerrado fica no painel como "encerrado" até um novo começar; esconder alertas antigos é refinamento de interface, não problema de dados.
+* O resync roda por eventos (reconexão, 409, aba visível, online), não por timer: sem polling constante, e a proteção por `revision` torna qualquer busca extra inofensiva.

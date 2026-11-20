@@ -113,7 +113,8 @@ An administrator starts an alert; every open session gets a modal asking where t
 squares (A to D) in a 2x2 grid. Each person picks one square (the first pick is final), and every session shows the
 names inside the squares live. Several people can share a square. Chat keeps working. An administrator can end the
 alert: further picks are refused. The state is stored in PostgreSQL, so a refresh or reconnect restores it (including an
-alert that ended while the session was offline), and each new alert starts with no responses.
+alert that ended while the session was offline), and each new alert starts with no responses. A client also
+resynchronises when a pick or end is refused with 409, when the tab becomes visible and when the browser comes back online.
 
 | Endpoint | Purpose |
 |----------|---------|
