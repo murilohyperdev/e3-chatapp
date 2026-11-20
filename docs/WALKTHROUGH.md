@@ -1,4 +1,4 @@
-# Codebase walkthrough (items 1 to 6)
+# Codebase walkthrough (items 1 to 7)
 
 Interview notes: what each part does and why it was built that way. Portuguese version: [WALKTHROUGH.pt-BR.md](WALKTHROUGH.pt-BR.md).
 
@@ -251,17 +251,25 @@ client and in missing tests. That is the honest, smallest change.
 ## 8. Tests
 
 
-* **Backend (144 tests, 497 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
+* **Backend (162 tests, 563 assertions, PHPUnit against a separate `e3chat_test` database):** login success/failure/
   throttling, logout and 401, password reset (link target, unknown email, throttle, expired, reused or invalid token,
   weak password), gates for both roles, 401/403/200 enforcement, mass-assignment, profile validation per field,
   other-user and administrator 403, uploads (valid, replaced, removed, wrong type, wrong format, too large, too
   small, too many pixels, missing), directory ordering, pagination and absence of private fields; chat: post (valid, trimmed, exactly 2000, 2001, empty/blank/missing/array, forged sender, 403 without the ability, 401), history (empty, order, 50 per page, `before`, `has_more`, invalid cursor, no private fields, no N+1, 401), broadcast (right channel/name/payload, same shape as the HTTP response, nothing on failure, broadcaster down still 201 and saved) and channel authorisation (member signed, visitor 401, other channels 403); alerts: start (administrator 201 and empty, regular user 403 and nothing created, visitor 401, second active alert 409, a new alert after the end starts empty), current (none, active with responses, ended while offline, latest only, no private fields, 401), pick (valid, administrator too, shared square, second pick 409 and first kept, again in a new alert, invalid/missing/wrong-case/array square 422, ended alert 409, unknown alert 404, forged person ignored, 403 without the ability, 401), end (responses kept, twice 409, 403 for a user, 401, 404, pick after the end refused), the database constraints hit with raw inserts (second active alert, duplicate response, square outside a to d, cascades, mass assignment), broadcast (channel/name/snapshot, revision, nothing on any rejected request, broadcaster down still succeeds) and the `alerts` channel (permitted user, missing ability 403, visitor 401). Item 6 adds a full-lifecycle journey test (start, pick, end, restore, late pick refused, next alert empty) and a unit test of the ended snapshot. Two requests truly racing are covered by the database constraints rather than by a concurrent test.
-* **Frontend (98 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
+* **Frontend (118 tests, Vitest + Testing Library):** API client (CSRF, 204, 422, 419 retry, 401 handler, multipart, socket id header),
   route guards, login/forgot/reset pages, profile page, people page, home page (including the exact 1 px white text), Echo options
   (own origin, fresh CSRF header), and the chat panel with a fake real-time layer (history, live message, no duplicates, send
   by button/Enter/Shift+Enter, blank, server error keeps text, no ability, older messages, offline notice, catch-up after
   reconnect, retry, HTML shown as text, unsubscribe on unmount); alerts: `applySnapshot` (newer id, higher revision, stale ignored, idempotent), `useAlert` with a fake Echo (resync on a 409 for pick and end, on tab visible and on online, silent on failure, listeners removed; live start, stale ignored, an empty first load does not erase a live alert, catch-up of an alert that ended while offline, actions, errors, retry), `AlertModal` (four labeled squares, pick, cannot be dismissed, server error keeps it open, closed after picking / ended / without ability), `AlertBoard` (names in squares, shared squares, ended notice) and `AlertSection` (modal opens live, name appears after picking, reload restores, ending closes the modal, controls per role, nothing for users who may not receive alerts).
-* Run them: `docker compose exec backend php artisan test` and `docker compose exec frontend npm test`.
+* **Item 7 (this section's last pass): audit, then fill real gaps.** I mapped every route rule, request validation, enum, seeder, channel and frontend module to a named test instead of chasing a coverage percentage (no coverage driver is installed, and a number does not say *which behaviour* is proven). The audit found these holes, now closed:
+  * `SeederTest`: the demo seeder creates an administrator and a regular user, is idempotent, repairs role and password of an existing account, and both accounts sign in through the real endpoint with the documented password (the brief says "seed at least two accounts").
+  * `POST /messages` throttle: the 31st post in a minute is a 429 and stores nothing (proves the `throttle:30,1` wiring on the real route, not a mock).
+  * `GET /alerts/current` returns 403 when the user lacks `receive-alerts` or `view-locations` (the gate is overridden per test because both built-in roles hold both abilities).
+  * Unit tests with no HTTP and no framework boot where possible: `Square`, `UserRole::can` (a user never gets start/end, an administrator is a superset), and `Alert::isActive` agreeing with the `active` scope.
+  * Frontend: `AuthProvider` (loading, signed in, visitor, sign in ok/refused, sign out closes the WebSocket, a later 401 drops the user, handler removed on unmount), `AppLayout`, `UserAvatar`, `errors.ts`, and the forgot-password failure paths (422 under the field, generic network error).
+* **One command:** `./scripts/test.sh` (stack must be up) runs backend tests, frontend tests, lint and type-check/build. Every stage runs even if one fails, the summary lists PASS/FAIL per stage and the exit status is non-zero on any failure. It only calls `php artisan test`, never `migrate:fresh`, so it cannot wipe the development database (the testing environment is the separate `e3chat_test` database from `phpunit.xml`).
+* **Decisions to defend:** behaviour-based audit over a coverage number; real middleware in the throttle test; gate override instead of inventing a third role; the first-login-per-test rule (Laravel caches the guard, so a second login in the same test hits a different guard class: use one login per test or a data provider); no end-to-end browser tests because the live demo covers that; no CI in this change.
+* Run them: `./scripts/test.sh` (everything), or `docker compose exec backend php artisan test` and `docker compose exec frontend npm test` separately.
 
 ## 9. Trade-offs to mention
 

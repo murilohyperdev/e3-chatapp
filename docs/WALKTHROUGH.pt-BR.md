@@ -1,4 +1,4 @@
-# Explicação do código (itens 1 a 6)
+# Explicação do código (itens 1 a 7)
 
 Notas para a entrevista: o que cada parte faz e por que foi feita assim. Versão em inglês: [WALKTHROUGH.md](WALKTHROUGH.md).
 
@@ -257,7 +257,7 @@ falta de testes. Essa é a mudança honesta e mínima.
 ## 8. Testes
 
 
-* **Backend (144 testes, 497 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
+* **Backend (162 testes, 563 asserções, PHPUnit contra o banco separado `e3chat_test`):** login com sucesso, falha e
   limite de tentativas, logout e 401, redefinição de senha (destino do link, e-mail desconhecido, limite, token
   expirado, reutilizado ou inválido, senha fraca), gates para os dois papéis, imposição de 401/403/200, atribuição em
   massa, validação de cada campo do perfil, 403 para outro usuário e para administrador, uploads (válido, substituído,
@@ -267,13 +267,21 @@ falta de testes. Essa é a mudança honesta e mínima.
   inválido, sem campos privados, sem N+1, 401), broadcast (canal/nome/conteúdo certos, mesmo formato da resposta HTTP,
   nada em caso de falha, broadcaster fora do ar continua 201 e salva) e autorização do canal (membro assinado, visitante
   401, outros canais 403); alertas: iniciar (administrador 201 e vazio, usuário comum 403 e nada criado, visitante 401, segundo alerta ativo 409, alerta novo depois do fim começa vazio), atual (nenhum, ativo com respostas, encerrado enquanto offline, só o último, sem campos privados, 401), escolher (válido, administrador também, quadrado compartilhado, segunda escolha 409 e a primeira mantida, de novo em outro alerta, quadrado inválido/ausente/maiúsculo/array 422, alerta encerrado 409, alerta inexistente 404, pessoa forjada ignorada, 403 sem a habilidade, 401), encerrar (respostas mantidas, duas vezes 409, 403 para usuário, 401, 404, escolha depois do fim recusada), constraints do banco acionadas com inserts diretos (segundo alerta ativo, resposta duplicada, quadrado fora de a a d, cascatas, mass assignment), broadcast (canal/nome/snapshot, revisão, nada em requisição rejeitada, broadcaster fora do ar continua funcionando) e o canal `alerts` (usuário permitido, sem habilidade 403, visitante 401). Duas requisições realmente simultâneas são cobertas pelas constraints do banco, não por um teste concorrente.
-* **Frontend (98 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
+* **Frontend (118 testes, Vitest + Testing Library):** cliente da API (CSRF, 204, 422, nova tentativa em 419, handler de
   401, multipart, cabeçalho do socket), guards de rota, páginas de login/esqueci a senha/redefinir, página de perfil, de
   pessoas e inicial (incluindo o texto exato branco de 1 px), opções do Echo (origem própria, CSRF atualizado) e o painel de
   chat com uma camada de tempo real falsa (histórico, mensagem ao vivo, sem duplicar, envio por botão/Enter/Shift+Enter,
   em branco, erro do servidor mantém o texto, sem habilidade, mensagens antigas, aviso offline, recuperação após
   reconexão, tentar de novo, HTML mostrado como texto, cancelar inscrição ao desmontar); alertas: `applySnapshot` (id mais novo, revisão maior, antigo ignorado, idempotente), `useAlert` com Echo falso (resync em 409 de pick e end, em aba visível e em online, silencioso em falha, listeners removidos; início ao vivo, antigo ignorado, primeira carga vazia não apaga alerta ao vivo, recuperação de alerta encerrado offline, ações, erros, tentar de novo), `AlertModal` (quatro quadrados rotulados, escolha, não fecha com Esc, erro do servidor mantém aberto, fechado depois de escolher / encerrado / sem habilidade), `AlertBoard` (nomes nos quadrados, quadrados compartilhados, aviso de encerrado) e `AlertSection` (modal abre ao vivo, nome aparece depois de escolher, recarregar restaura, encerrar fecha o modal, controles por papel, nada para quem não pode receber alertas).
-* Para rodar: `docker compose exec backend php artisan test` e `docker compose exec frontend npm test`.
+* **Item 7 (última passada desta seção): auditoria e depois cobrir lacunas reais.** Mapeei cada regra de rota, validação, enum, seeder, canal e módulo do frontend para um teste com nome, em vez de perseguir percentual de cobertura (não há driver de cobertura instalado, e um número não diz *qual comportamento* está provado). A auditoria achou estes buracos, agora fechados:
+  * `SeederTest`: o seeder cria um administrador e um usuário comum, é idempotente, repara papel e senha de uma conta existente, e as duas contas entram pelo endpoint real com a senha documentada (o enunciado pede "pelo menos duas contas").
+  * Limite de `POST /messages`: o 31º envio em um minuto é 429 e não grava nada (prova a ligação do `throttle:30,1` na rota real, sem mock).
+  * `GET /alerts/current` devolve 403 quando falta `receive-alerts` ou `view-locations` (o gate é sobrescrito por teste porque os dois papéis têm as duas habilidades).
+  * Testes unitários sem HTTP: `Square`, `UserRole::can` (usuário nunca recebe iniciar/encerrar, administrador é superconjunto) e `Alert::isActive` coerente com o escopo `active`.
+  * Frontend: `AuthProvider` (carregando, autenticado, visitante, login ok/recusado, logout fecha o WebSocket, um 401 posterior derruba o usuário, handler removido ao desmontar), `AppLayout`, `UserAvatar`, `errors.ts` e as falhas do esqueci-a-senha (422 no campo, erro genérico de rede).
+* **Um comando:** `./scripts/test.sh` (a stack precisa estar no ar) roda testes do backend, testes do frontend, lint e type-check/build. Todos os estágios rodam mesmo se um falhar, o resumo mostra PASS/FAIL por estágio e o código de saída é diferente de zero em qualquer falha. Ele só chama `php artisan test`, nunca `migrate:fresh`, então não consegue apagar o banco de desenvolvimento (o ambiente de teste é o banco separado `e3chat_test` do `phpunit.xml`).
+* **Decisões para defender:** auditoria por comportamento em vez de número de cobertura; middleware real no teste de limite; sobrescrever o gate em vez de inventar um terceiro papel; um login por teste (o Laravel guarda o guard em cache, então um segundo login no mesmo teste cai em outra classe de guard: use um login por teste ou um data provider); sem testes end-to-end de navegador porque a demonstração ao vivo cobre isso; sem CI nesta mudança.
+* Para rodar: `./scripts/test.sh` (tudo), ou `docker compose exec backend php artisan test` e `docker compose exec frontend npm test` separadamente.
 
 ## 9. Trade-offs para mencionar
 

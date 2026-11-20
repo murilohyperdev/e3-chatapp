@@ -6,6 +6,7 @@ use App\Models\Alert;
 use App\Models\AlertResponse;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Gate;
 use Tests\TestCase;
 
 class CurrentAlertTest extends TestCase
@@ -68,5 +69,20 @@ class CurrentAlertTest extends TestCase
     public function test_visitor_gets_401(): void
     {
         $this->getJson('/api/alerts/current')->assertUnauthorized();
+    }
+
+    public function test_a_user_without_the_receive_alerts_ability_is_refused(): void
+    {
+        Gate::define('receive-alerts', fn () => false);
+
+        $this->actingAs(User::factory()->create())->getJson('/api/alerts/current')->assertForbidden();
+    }
+
+    public function test_a_user_without_the_view_locations_ability_is_refused(): void
+    {
+        Alert::factory()->create();
+        Gate::define('view-locations', fn () => false);
+
+        $this->actingAs(User::factory()->create())->getJson('/api/alerts/current')->assertForbidden();
     }
 }

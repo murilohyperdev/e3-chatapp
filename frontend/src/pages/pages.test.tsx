@@ -72,6 +72,39 @@ describe('ForgotPasswordPage', () => {
   })
 })
 
+describe('ForgotPasswordPage failures', () => {
+  function renderForgot() {
+    render(
+      <MemoryRouter>
+        <ForgotPasswordPage />
+      </MemoryRouter>,
+    )
+  }
+
+  it('shows the validation error under the email field and no success message', async () => {
+    vi.mocked(authApi.requestPasswordReset).mockRejectedValue(
+      new ApiError(422, 'Invalid', { email: ['The email field must be a valid email address.'] }),
+    )
+    renderForgot()
+
+    await userEvent.type(screen.getByLabelText(/email/i), 'nope')
+    await userEvent.click(screen.getByRole('button', { name: /send reset link/i }))
+
+    expect(await screen.findByText('The email field must be a valid email address.')).toBeInTheDocument()
+    expect(screen.queryByText(/emailed/i)).not.toBeInTheDocument()
+  })
+
+  it('shows a generic error when the request itself fails', async () => {
+    vi.mocked(authApi.requestPasswordReset).mockRejectedValue(new TypeError('network down'))
+    renderForgot()
+
+    await userEvent.type(screen.getByLabelText(/email/i), 'jane@example.com')
+    await userEvent.click(screen.getByRole('button', { name: /send reset link/i }))
+
+    expect(await screen.findByText('Something went wrong. Please try again.')).toBeInTheDocument()
+  })
+})
+
 describe('ResetPasswordPage', () => {
   function renderReset(search: string) {
     return render(
