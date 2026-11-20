@@ -290,6 +290,13 @@ falta de testes. Essa é a mudança honesta e mínima.
   * Pegadinhas que apareceram: o administrador também recebe o modal de localização, que esconde o resto da página da árvore de acessibilidade, então o próximo clique tem de ser a escolha; os rótulos do MUI incluem o asterisco de obrigatório, então `getByLabel('New password', {exact: true})` nunca casa; e `locator.isVisible()` ignora o timeout.
 * Para rodar: `./scripts/test.sh` (tudo; adicione `--e2e` para os testes de navegador), ou `docker compose exec backend php artisan test` e `docker compose exec frontend npm test` separadamente.
 
+* **Item 8 como roteiro e runner guiado (`docs/DEMO.md`, `e2e/demo/demo.ts`, `./scripts/demo.sh`).** O enunciado pede uma demonstração ao vivo de sete cenários com duas sessões independentes. São dois artefatos, porque a call ao vivo precisa de coisas diferentes de um teste: um **roteiro** para seguir (o que cada janela faz, o que falar, perguntas prováveis) e um **runner** que executa a mesma jornada em ritmo humano.
+  * O runner é um script Playwright como *biblioteca*, não um teste: sem timeouts nem reporter, e as legendas e pausas fazem parte do objetivo. Ele reutiliza `e2e/support/helpers.ts`, então demo e testes compartilham o mesmo jeito de logar, chamar a API e ler o Mailpit.
+  * Duas **instâncias separadas do Chromium**, lado a lado (modo visível), cada uma com seu contexto: cookies e WebSockets independentes. `--record` salva um `.webm` por sessão (`e2e/recordings/`, ignorado pelo git): plano B se a execução ao vivo falhar.
+  * Uma **legenda** na tela (overlay injetado, reaplicado após navegações com `addInitScript` + `sessionStorage`) nomeia cada cenário, para a plateia e a gravação acompanharem, sem mexer no código da aplicação.
+  * A ordem importa: chat, permissões (UI e um 403 direto), entrega do alerta, atualização de localização, recuperação por refresh e offline, encerramento, e recuperação de senha **por último**, porque o e-mail de reset é limitado a um por minuto e o passo desloga a janela do usuário.
+  * Segurança de dados em um ambiente de dev compartilhado: começa encerrando qualquer alerta ativo, encerra o que inicia, marca as mensagens do chat, nunca roda comandos de migrate e restaura a senha alterada (inclusive após uma execução com falha) a partir de um navegador headless separado.
+  * Rodei duas vezes seguidas durante o desenvolvimento para provar que é repetível. Rode do host (variáveis `DEMO_SLOW`, `DEMO_HEADLESS`, `DEMO_RECORD` por trás das flags `--slow`, `--headless`, `--record`).
 ## 9. Trade-offs para mencionar
 
 * Proxy de mesma origem e sessão por cookie pedem implantação com origem única em produção (ou configuração de
