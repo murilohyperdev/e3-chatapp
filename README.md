@@ -15,7 +15,7 @@ with one `docker compose up`.
 | Log in | [Demo accounts](#demo-accounts) |
 | Run the tests | [Tests](#tests) |
 | Run or follow the live demo | [Demo](#demo) and [docs/DEMO.md](docs/DEMO.md) |
-| Understand the code and the trade-offs | [Architecture](#architecture-and-key-decisions) and [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md) ([pt-BR](docs/WALKTHROUGH.pt-BR.md)) |
+| Understand the code and the trade-offs | [Architecture](#architecture-and-key-decisions) |
 
 ## Technology choices and versions
 
@@ -112,7 +112,7 @@ docker compose exec frontend npm run build        # type-check + production buil
 Covered, with success and failure paths: authentication and throttling, password recovery, roles and abilities (401/403
 on direct requests), profiles and uploads, directory, chat (history, posting, rate limit, broadcast, channel
 authorisation), alerts (start, pick, end, conflicts, database constraints, restore after reconnect), the demo seeder,
-and the React pages, hooks and components. Details: [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md), section "Tests".
+and the React pages, hooks and components.
 
 ### End-to-end tests (browser, optional)
 
@@ -200,8 +200,8 @@ Reverb (:8080) <------------------+
 | `start-alerts`, `end-alerts` | no | yes |
 
 Email, phone and address are never exposed to other users (directory, chat senders and alert responses only carry id,
-name and picture). The main page also carries a 1 px white text element required by the exercise brief. For file-by-file
-explanations and the full trade-off list see [docs/WALKTHROUGH.md](docs/WALKTHROUGH.md).
+name and picture). The main page also carries a 1 px white text element required by the exercise brief. The trade-offs are listed in the
+[Architecture](#architecture-and-key-decisions) section.
 
 ## Project layout
 
@@ -210,7 +210,7 @@ backend/    Laravel API (app, routes, migrations, seeders, PHPUnit tests)
 frontend/   React + TypeScript + MUI (Vite, Vitest)
 e2e/        Playwright journeys and the demo runner
 docker/     Dockerfile and init scripts for the containers
-docs/       DEMO.md (live script), WALKTHROUGH.md / WALKTHROUGH.pt-BR.md (code tour)
+docs/       DEMO.md (live script)
 scripts/    test.sh (whole suite), demo.sh (guided two-session demo)
 openspec/   Spec-driven change workflow: specs and archived changes
 docker-compose.yml   backend, reverb, frontend, postgres, mailpit
