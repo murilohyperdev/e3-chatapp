@@ -5,8 +5,8 @@
 #   ./scripts/test.sh
 #   ./scripts/test.sh --e2e   # also run the browser (Playwright) tests in e2e/
 #
-# The end-to-end stage is opt-in: it needs a Chromium browser (`cd e2e && npm ci &&
-# npx playwright install chromium`, or E2E_CHROMIUM_PATH) and it writes a few demo
+# The end-to-end stage is opt-in: it needs `cd e2e && npm ci` (the Chromium build is
+# installed by this script unless E2E_CHROMIUM_PATH is set) and it writes a few demo
 # chat messages and one alert (ended again) to the development database.
 #
 # Every stage runs even when an earlier one fails, so one run shows everything that
@@ -54,10 +54,13 @@ run_stage "Frontend type-check and build" docker compose exec -T frontend npm ru
 
 if [ "$run_e2e" = 1 ]; then
   if [ ! -d e2e/node_modules ]; then
-    echo "e2e/node_modules is missing. Run: cd e2e && npm ci && npx playwright install chromium" >&2
+    echo "e2e/node_modules is missing. Run: cd e2e && npm ci" >&2
     names+=("End-to-end tests (Playwright)")
     results+=("FAIL")
   else
+    if [ -z "${E2E_CHROMIUM_PATH:-}" ]; then
+      run_stage "Playwright Chromium install" bash -c 'cd e2e && npx playwright install chromium'
+    fi
     run_stage "End-to-end tests (Playwright)" bash -c 'cd e2e && npx playwright test'
   fi
 else

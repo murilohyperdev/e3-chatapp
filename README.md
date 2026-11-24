@@ -121,9 +121,13 @@ and the React pages, hooks and components. Details: [docs/WALKTHROUGH.md](docs/W
 reload and offline/online recovery, and password recovery through Mailpit.
 
 ```bash
-cd e2e && npm ci && npx playwright install chromium   # once
-cd .. && ./scripts/test.sh --e2e                       # everything, including the browser tests
+cd e2e && npm ci                   # once
+cd .. && ./scripts/test.sh --e2e   # everything, including the browser tests
 ```
+
+`./scripts/test.sh --e2e` runs `npx playwright install chromium` first. It is idempotent, it is needed again after
+Playwright updates, and it is skipped when `E2E_CHROMIUM_PATH` is set. Running `npx playwright test` by hand still
+requires that install.
 
 They are opt-in because they need a browser and run against the development stack: each run adds a few chat messages
 (tagged `e2e-...`), starts and ends alerts, and changes then restores the password of `margaret@example.com`. They never
