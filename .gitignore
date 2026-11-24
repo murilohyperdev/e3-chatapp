@@ -2,3 +2,7 @@
 node_modules/
 vendor/
 .DS_Store
+
+# Local study notes (kept on disk, not published)
+docs/WALKTHROUGH.md
+docs/WALKTHROUGH.pt-BR.md
